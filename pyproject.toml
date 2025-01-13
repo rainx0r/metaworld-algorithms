@@ -1,0 +1,45 @@
+[project]
+name = "metaworld-algorithms"
+version = "0.1.0"
+description = "Implementations of Multi-Task and Meta-Learning baselines for the Metaworld benchmark"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "gymnasium>=1.0.0",
+    "metaworld",
+    "distrax>=0.1.5",
+    "flax>=0.9.0",
+    "jaxtyping>=0.2.34",
+    "numpy>=2.1.2",
+    "orbax-checkpoint>=0.7.0",
+    "tyro>=0.8.11",
+    "wandb>=0.18.5",
+]
+
+[project.optional-dependencies]
+cpu = ["jax>=0.4.35"]
+metal = ["jax>=0.4.26", "jax-metal>=0.1.0; sys_platform == 'darwin'"]
+cuda12 = ["jax[cuda12]>=0.4.35"]
+# tpu = ["jax[tpu]>=0.4.35"]
+
+[tool.uv]
+# prerelease = "allow"
+# find-links = ["https://storage.googleapis.com/jax-releases/libtpu_releases.html"]
+conflicts = [
+  [
+    { extra = "cpu" },
+    { extra = "metal" },
+    { extra = "cuda12" },
+    # { extra = "tpu" },
+  ],
+]
+
+[tool.ruff]
+ignore = ["F722"]
+ignore-init-module-imports = true
+
+[tool.setuptools.packages.find]
+include = ["metaworld_algorithms", "metaworld_algorithms.*"]
+
+[tool.uv.sources]
+metaworld = { git = "https://github.com/reginald-mclean/Metaworld", rev = "release" }
