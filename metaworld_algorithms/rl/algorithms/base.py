@@ -17,7 +17,10 @@ from metaworld_algorithms.config.rl import (
     TrainingConfig,
 )
 from metaworld_algorithms.envs import EnvConfig
-from metaworld_algorithms.rl.buffers import MultiTaskReplayBuffer, MultiTaskRolloutBuffer
+from metaworld_algorithms.rl.buffers import (
+    MultiTaskReplayBuffer,
+    MultiTaskRolloutBuffer,
+)
 from metaworld_algorithms.types import (
     Action,
     Agent,
@@ -62,9 +65,7 @@ class Algorithm(
     def sample_action(self, observation: Observation) -> tuple[Self, Action]: ...
 
     @abc.abstractmethod
-    def eval_action(
-        self, observations: Observation
-    ) -> Action: ...
+    def eval_action(self, observations: Observation) -> Action: ...
 
     # @abc.abstractmethod
     # def get_initial_parameters(self) -> tuple[Dict, Dict, Dict]: ...
@@ -75,7 +76,7 @@ class Algorithm(
         config: TrainingConfigType,
         envs: gym.vector.VectorEnv,
         env_config: EnvConfig,
-        run_timestamp: str,
+        run_timestamp: str | None = None,
         seed: int = 1,
         track: bool = True,
         checkpoint_manager: ocp.CheckpointManager | None = None,
@@ -105,7 +106,7 @@ class OffPolicyAlgorithm(
         config: OffPolicyTrainingConfig,
         envs: gym.vector.VectorEnv,
         env_config: EnvConfig,
-        run_timestamp: str,
+        run_timestamp: str | None = None,
         seed: int = 1,
         track: bool = True,
         checkpoint_manager: ocp.CheckpointManager | None = None,
@@ -273,7 +274,7 @@ class OnPolicyAlgorithm(
         config: OnPolicyTrainingConfig,
         envs: gym.vector.VectorEnv,
         env_config: EnvConfig,
-        run_timestamp: str,
+        run_timestamp: str | None = None,
         seed: int = 1,
         track: bool = True,
         checkpoint_manager: ocp.CheckpointManager | None = None,
@@ -387,9 +388,9 @@ class OnPolicyAlgorithm(
                         self, logs = self.update(minibatch_rollout)
 
                     if config.target_kl is not None:
-                        assert (
-                            "losses/approx_kl" in logs
-                        ), "Algorithm did not provide approximate KL div, but approx_kl is not None."
+                        assert "losses/approx_kl" in logs, (
+                            "Algorithm did not provide approximate KL div, but approx_kl is not None."
+                        )
                         if logs["losses/approx_kl"] > config.target_kl:
                             print(
                                 f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"

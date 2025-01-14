@@ -15,9 +15,8 @@ from metaworld.evaluation import evaluation
 @dataclass(frozen=True)
 class MetaworldConfig(EnvConfig):
     reward_func_version: str = "v2"
-    num_eval_episodes: int = 50
     num_goals: int = 50
-    reward_normalization_method : str | None = None
+    reward_normalization_method: str | None = None
 
     @cached_property
     @override
@@ -102,7 +101,7 @@ class MetaworldConfig(EnvConfig):
         assert isinstance(envs, gym.vector.AsyncVectorEnv) or isinstance(
             envs, gym.vector.SyncVectorEnv
         )
-        return evaluation(agent, envs, num_episodes=self.num_eval_episodes)
+        return evaluation(agent, envs, num_episodes=self.evaluation_num_episodes)
 
     @override
     def spawn(self, seed: int = 1) -> gym.vector.VectorEnv:

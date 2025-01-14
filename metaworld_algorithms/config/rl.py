@@ -1,10 +1,20 @@
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from metaworld_algorithms.envs import EnvConfig
+    from metaworld_algorithms.rl.algorithms import Algorithm
 
 
 @dataclass(frozen=True)
 class AlgorithmConfig:
     num_tasks: int
     gamma: float = 0.99
+
+    def spawn(self, env: "EnvConfig", seed: int) -> "Algorithm":
+        from metaworld_algorithms.rl.algorithms import get_algorithm_for_config
+
+        return get_algorithm_for_config(self).initialize(self, env, seed)
 
 
 @dataclass(frozen=True, kw_only=True)
