@@ -26,7 +26,7 @@ class Arguments:
     resume: bool = False
     """Whether the run should resume."""
 
-    run_name: str = "MTSAC_MT10"
+    run_name: str = "MTPPO_MT10"
     """The name for the run."""
 
     enable_wandb: bool = True

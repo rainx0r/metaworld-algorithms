@@ -15,8 +15,7 @@ from metaworld_algorithms.config.networks import (
 from metaworld_algorithms.config.nn import MOOREConfig
 from metaworld_algorithms.config.rl import OffPolicyTrainingConfig
 from metaworld_algorithms.envs.metaworld import MetaworldConfig
-from metaworld_algorithms.rl.algorithms.base import OffPolicyAlgorithm
-from metaworld_algorithms.rl.algorithms.mtsac import MTSACConfig
+from metaworld_algorithms.rl.algorithms import MTSACConfig, OffPolicyAlgorithm
 
 
 # CLI args
@@ -31,7 +30,7 @@ class Arguments:
     resume: bool = False
     """Whether the run should resume."""
 
-    run_name: str = "SoftModules_MT10"
+    run_name: str = "MOORE_MT10"
     """The name for the run."""
 
     enable_wandb: bool = True

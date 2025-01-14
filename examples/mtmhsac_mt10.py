@@ -8,12 +8,14 @@ import orbax.checkpoint as ocp
 import tyro
 
 import metaworld_algorithms.checkpoint as ckpt_utils
-from metaworld_algorithms.config.networks import ContinuousActionPolicyConfig, QValueFunctionConfig
+from metaworld_algorithms.config.networks import (
+    ContinuousActionPolicyConfig,
+    QValueFunctionConfig,
+)
 from metaworld_algorithms.config.nn import MultiHeadConfig
 from metaworld_algorithms.config.rl import OffPolicyTrainingConfig
 from metaworld_algorithms.envs.metaworld import MetaworldConfig
-from metaworld_algorithms.rl.algorithms.base import OffPolicyAlgorithm
-from metaworld_algorithms.rl.algorithms.mtsac import MTSACConfig
+from metaworld_algorithms.rl.algorithms import MTSACConfig, OffPolicyAlgorithm
 
 
 # CLI args
@@ -28,7 +30,7 @@ class Arguments:
     resume: bool = False
     """Whether the run should resume."""
 
-    run_name: str = "SoftModules_MT10"
+    run_name: str = "MTMHSAC_MT10"
     """The name for the run."""
 
     enable_wandb: bool = True
@@ -63,7 +65,7 @@ def main(args: Arguments) -> None:
         critic_config=QValueFunctionConfig(
             network_config=MultiHeadConfig(num_tasks=num_tasks)
         ),
-        use_task_weights=True
+        use_task_weights=True,
     ).spawn(env_config, args.seed)
     training_config = OffPolicyTrainingConfig(
         total_steps=20_000_000,

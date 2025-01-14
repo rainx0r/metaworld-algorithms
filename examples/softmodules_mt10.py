@@ -15,8 +15,7 @@ from metaworld_algorithms.config.networks import (
 from metaworld_algorithms.config.nn import SoftModulesConfig
 from metaworld_algorithms.config.rl import OffPolicyTrainingConfig
 from metaworld_algorithms.envs.metaworld import MetaworldConfig
-from metaworld_algorithms.rl.algorithms.base import OffPolicyAlgorithm
-from metaworld_algorithms.rl.algorithms.mtsac import MTSACConfig
+from metaworld_algorithms.rl.algorithms import MTSACConfig, OffPolicyAlgorithm
 
 
 # CLI args
