@@ -3,7 +3,7 @@ name = "metaworld-algorithms"
 version = "0.1.0"
 description = "Implementations of Multi-Task and Meta-Learning baselines for the Metaworld benchmark"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "gymnasium>=1.0.0",
     "metaworld",
@@ -17,22 +17,29 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cpu = ["jax>=0.4.35"]
-metal = ["jax>=0.4.26", "jax-metal>=0.1.0; sys_platform == 'darwin'"]
-cuda12 = ["jax[cuda12]>=0.4.35"]
-# tpu = ["jax[tpu]>=0.4.35"]
+cpu = ["jax>=0.5.0"]
+# https://github.com/jax-ml/jax/issues/27062
+metal = ["jax<=0.5.0", "jax-metal>=0.1.0; sys_platform == 'darwin'"]
+cuda12 = ["jax[cuda12]>=0.5.0"]
+tpu = ["jax[tpu]>=0.5.0"]
+testing = [
+    "chex>=0.1.89",
+    "pytest>=8.3.5",
+]
 
 [tool.uv]
-# prerelease = "allow"
-# find-links = ["https://storage.googleapis.com/jax-releases/libtpu_releases.html"]
+prerelease = "allow"
 conflicts = [
   [
     { extra = "cpu" },
     { extra = "metal" },
     { extra = "cuda12" },
-    # { extra = "tpu" },
+    { extra = "tpu" },
   ],
 ]
+
+[tool.uv.sources]
+metaworld = { git = "https://github.com/reginald-mclean/Metaworld", rev = "release" }
 
 [tool.ruff]
 ignore = ["F722"]
@@ -40,6 +47,3 @@ ignore-init-module-imports = true
 
 [tool.setuptools.packages.find]
 include = ["metaworld_algorithms", "metaworld_algorithms.*"]
-
-[tool.uv.sources]
-metaworld = { git = "https://github.com/reginald-mclean/Metaworld", rev = "release" }

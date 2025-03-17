@@ -40,3 +40,13 @@ class OnPolicyTrainingConfig(TrainingConfig):
     compute_advantages: bool = True
     gae_lambda: float = 0.97
     target_kl: float | None = None
+
+
+@dataclass(frozen=True)
+class MetaLearningTrainingConfig(TrainingConfig):
+    meta_batch_size: int = 20
+    rollouts_per_task: int = 10
+
+    compute_advantages: bool = True
+    gae_lambda: float = 0.97
+    target_kl: float | None = None

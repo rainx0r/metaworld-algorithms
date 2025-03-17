@@ -29,6 +29,14 @@ class NeuralNetworkConfig:
     optimizer: OptimizerConfig = OptimizerConfig()
     """The optimizer to use for the network."""
 
+@dataclass(frozen=True, kw_only=True)
+class VanillaNetworkConfig(NeuralNetworkConfig):
+    use_skip_connections: bool = False
+    """Whether or not to use skip connections."""
+
+    use_layer_norm: bool = False
+    """Whether or not to use layer normalization."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class MultiHeadConfig(NeuralNetworkConfig):

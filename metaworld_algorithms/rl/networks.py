@@ -4,6 +4,7 @@ import distrax
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from jaxtyping import PRNGKeyArray
 
 from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
@@ -102,3 +103,28 @@ class Ensemble(nn.Module):
             axis_size=self.num,
         )
         return ensemble()(*args)
+
+
+class EnsembleMD(nn.Module):
+    """Ensemble where there is "multiple data" as input.
+    That is, the in_axes in the vmap is not None, and axis 0 should correspond
+    to the ensemble num."""
+    net_cls: nn.Module | Callable[..., nn.Module]
+    num: int
+
+    @nn.compact
+    def __call__(self, *args):
+        ensemble = nn.vmap(
+            self.net_cls,
+            variable_axes={"params": 0, "intermediates": 0},
+            split_rngs={"params": True, "dropout": True},
+            in_axes=0,
+            out_axes=0,
+            axis_size=self.num,
+        )
+        return ensemble(name="ensemble")(*args)
+
+    @staticmethod
+    def expand_params(params: nn.FrozenDict | dict, axis_size: int) -> nn.FrozenDict:
+        inner_params = jax.tree.map(lambda x: jnp.broadcast_to(x, (axis_size,) + x.shape), params)["params"]
+        return nn.FrozenDict({"params": {"ensemble": inner_params}})

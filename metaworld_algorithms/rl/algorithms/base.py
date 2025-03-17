@@ -13,6 +13,7 @@ from metaworld_algorithms.checkpoint import get_checkpoint_save_args
 from metaworld_algorithms.config.envs import EnvConfig
 from metaworld_algorithms.config.rl import (
     AlgorithmConfig,
+    MetaLearningTrainingConfig,
     OffPolicyTrainingConfig,
     OnPolicyTrainingConfig,
     TrainingConfig,
@@ -80,6 +81,26 @@ class Algorithm(
         checkpoint_metadata: CheckpointMetadata | None = None,
         buffer_checkpoint: ReplayBufferCheckpoint | None = None,
     ) -> Self: ...
+
+
+class MetaLearningAlgorithm(
+    Algorithm[AlgorithmConfigType, MetaLearningTrainingConfig, Rollout],
+    Generic[AlgorithmConfigType],
+):
+    @override
+    def train(
+        self,
+        config: MetaLearningTrainingConfig,
+        envs: gym.vector.VectorEnv,
+        env_config: EnvConfig,
+        run_timestamp: str | None = None,
+        seed: int = 1,
+        track: bool = True,
+        checkpoint_manager: ocp.CheckpointManager | None = None,
+        checkpoint_metadata: CheckpointMetadata | None = None,
+        buffer_checkpoint: RolloutBufferCheckpoint | None = None,
+    ) -> Self:
+        ...
 
 
 class OffPolicyAlgorithm(

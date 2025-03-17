@@ -16,12 +16,6 @@ type LayerActivationsDict = dict[str, Float[Array, "batch_size layer_dim"]]
 type Intermediates = dict[str, tuple[LayerActivations, ...] | "Intermediates"]
 
 
-class Agent(Protocol):
-    def eval_action(
-        self, observations: npt.NDArray[np.float64]
-    ) -> npt.NDArray[np.float64]: ...
-
-
 class ReplayBufferSamples(NamedTuple):
     observations: Float[Observation, " batch"]
     actions: Float[Action, " batch"]
@@ -46,6 +40,20 @@ class Rollout(NamedTuple):
     values: Float[np.ndarray, "task timestep 1"] | None = None
     returns: Float[np.ndarray, "task timestep 1"] | None = None
     advantages: Float[np.ndarray, "task timestep 1"] | None = None
+
+
+class Agent(Protocol):
+    def eval_action(
+        self, observations: npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.float64]: ...
+
+
+class MetaLearningAgent(Agent, Protocol):
+    def adapt_action(
+        self, observations: npt.NDArray[np.float64]
+    ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]: ...
+
+    def adapt(self, rollouts: Rollout) -> None: ...
 
 
 class CheckpointMetadata(TypedDict):

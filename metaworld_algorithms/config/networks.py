@@ -1,10 +1,10 @@
-from .nn import NeuralNetworkConfig
+from .nn import NeuralNetworkConfig, VanillaNetworkConfig
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class ContinuousActionPolicyConfig:
-    network_config: NeuralNetworkConfig = NeuralNetworkConfig(width=400, depth=3)
+    network_config: NeuralNetworkConfig = VanillaNetworkConfig(width=400, depth=3)
     """The config for the neural network to use for function approximation."""
 
     squash_tanh: bool = True
@@ -19,11 +19,12 @@ class ContinuousActionPolicyConfig:
 
 @dataclass(frozen=True)
 class QValueFunctionConfig:
-    network_config: NeuralNetworkConfig = NeuralNetworkConfig(width=400, depth=3)
+    network_config: NeuralNetworkConfig = VanillaNetworkConfig(width=400, depth=3)
     """The config for the neural network to use for function approximation."""
 
     use_classification: bool = False
     """Whether or not to use classification instead of regression."""
+
 
 @dataclass(frozen=True)
 class ValueFunctionConfig(QValueFunctionConfig): ...

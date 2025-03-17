@@ -2,7 +2,7 @@ import flax.linen as nn
 
 import metaworld_algorithms.config.nn
 
-from .base import MLP as VanillaNetwork
+from .base import  VanillaNetwork
 from .care import CARENetwork
 from .film import FiLMNetwork
 from .moore import MOORENetwork
@@ -26,8 +26,12 @@ def get_nn_arch_for_config(
         return FiLMNetwork
     elif type(config) is metaworld_algorithms.config.nn.MOOREConfig:
         return MOORENetwork
-    elif isinstance(config, metaworld_algorithms.config.nn.NeuralNetworkConfig):
+    elif type(config) is metaworld_algorithms.config.nn.VanillaNetworkConfig:
         return VanillaNetwork
+    else:
+        raise ValueError(
+            f"Unknown config type: {type(config)}. (NeuralNetworkConfig by itself is not supported, use VanillaNeworkConfig)"
+        )
 
 
 __all__ = ["VanillaNetwork", "MultiHeadNetwork", "SoftModularizationNetwork"]
