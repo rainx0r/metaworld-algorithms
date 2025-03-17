@@ -4,34 +4,41 @@ import dataclasses
 from functools import partial
 from typing import Self, override
 
-import distrax
 import flax.linen as nn
 import gymnasium as gym
 import jax
 import jax.flatten_util as flatten_util
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import optax
 from flax import struct
 from flax.core import FrozenDict
-from flax.training.train_state import TrainState
-from jaxtyping import Array, Float, PRNGKeyArray
+from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
-from metaworld_algorithms.config.networks import ContinuousActionPolicyConfig, QValueFunctionConfig
+from metaworld_algorithms.config.envs import EnvConfig
+from metaworld_algorithms.config.networks import (
+    ContinuousActionPolicyConfig,
+    QValueFunctionConfig,
+)
 from metaworld_algorithms.config.optim import OptimizerConfig
-from metaworld_algorithms.config.rl import AlgorithmConfig
-from metaworld_algorithms.envs import EnvConfig
-from metaworld_algorithms.rl.networks import ContinuousActionPolicy, Ensemble, QValueFunction
+from metaworld_algorithms.config.rl import AlgorithmConfig, OffPolicyTrainingConfig
+from metaworld_algorithms.optim.pcgrad import PCGradState
+from metaworld_algorithms.rl.buffers import MultiTaskReplayBuffer
+from metaworld_algorithms.rl.networks import (
+    ContinuousActionPolicy,
+    Ensemble,
+    QValueFunction,
+)
 from metaworld_algorithms.types import (
     Action,
-    Intermediates,
-    LayerActivationsDict,
     LogDict,
     Observation,
     ReplayBufferSamples,
 )
 
 from .base import OffPolicyAlgorithm
+from .utils import TrainState
 
 
 class MultiTaskTemperature(nn.Module):
@@ -106,6 +113,8 @@ class MTSAC(OffPolicyAlgorithm[MTSACConfig]):
     tau: float = struct.field(pytree_node=False)
     target_entropy: float = struct.field(pytree_node=False)
     use_task_weights: bool = struct.field(pytree_node=False)
+    split_actor_losses: bool = struct.field(pytree_node=False)
+    split_critic_losses: bool = struct.field(pytree_node=False)
     num_critics: int = struct.field(pytree_node=False)
 
     @override
@@ -179,6 +188,20 @@ class MTSAC(OffPolicyAlgorithm[MTSACConfig]):
             target_entropy=target_entropy,
             use_task_weights=config.use_task_weights,
             num_critics=config.num_critics,
+            split_actor_losses=config.actor_config.network_config.optimizer.requires_split_task_losses,
+            split_critic_losses=config.critic_config.network_config.optimizer.requires_split_task_losses,
+        )
+
+    @override
+    def spawn_replay_buffer(
+        self, env_config: EnvConfig, config: OffPolicyTrainingConfig, seed: int = 1
+    ) -> MultiTaskReplayBuffer:
+        return MultiTaskReplayBuffer(
+            total_capacity=config.buffer_size,
+            num_tasks=self.num_tasks,
+            env_obs_space=env_config.observation_space,
+            env_action_space=env_config.action_space,
+            seed=seed,
         )
 
     @override
@@ -199,141 +222,133 @@ class MTSAC(OffPolicyAlgorithm[MTSACConfig]):
     def eval_action(self, observations: Observation) -> Action:
         return jax.device_get(_eval_action(self.actor, observations))
 
-    @jax.jit
-    def _update_inner(self, data: ReplayBufferSamples) -> tuple[Self, LogDict]:
-        task_ids = data.observations[..., -self.num_tasks :]
+    def split_data_by_tasks(
+        self,
+        data: PyTree[Float[Array, "batch data_dim"]],
+        task_ids: Float[npt.NDArray, "batch num_tasks"],
+    ) -> PyTree[Float[Array, "num_tasks per_task_batch data_dim"]]:
+        tasks = jnp.argmax(task_ids, axis=1)
+        sorted_indices = jnp.argsort(tasks)
 
-        # --- Critic loss ---
-        key, actor_loss_key, critic_loss_key = jax.random.split(self.key, 3)
+        def group_by_task_leaf(
+            leaf: Float[Array, "batch data_dim"],
+        ) -> Float[Array, "task task_batch data_dim"]:
+            leaf_sorted = leaf[sorted_indices]
+            return leaf_sorted.reshape(self.num_tasks, -1, leaf.shape[1])
 
-        def update_critic(
-            _critic: CriticTrainState,
-            alpha_val: Float[Array, "batch 1"],
-            task_weights: Float[Array, "batch 1"] | None = None,
-        ) -> tuple[CriticTrainState, LogDict]:
-            # Sample a'
+        return jax.tree.map(group_by_task_leaf, data), sorted_indices
+
+    def unsplit_data_by_tasks(
+        self,
+        split_data: PyTree[Float[Array, "num_tasks per_task_batch data_dim"]],
+        sort_indices: jax.Array,
+    ) -> PyTree[Float[Array, "batch data_dim"]]:
+        def reconstruct_leaf(
+            leaf: Float[Array, "num_tasks per_task_batch data_dim"],
+        ) -> Float[Array, "batch data_dim"]:
+            batch_size = leaf.shape[0] * leaf.shape[1]
+            flat = leaf.reshape(batch_size, leaf.shape[-1])
+            # Create inverse permutation
+            inverse_indices = jnp.zeros_like(sort_indices)
+            inverse_indices = inverse_indices.at[sort_indices].set(
+                jnp.arange(batch_size)
+            )
+            return flat[inverse_indices]
+
+        return jax.tree.map(reconstruct_leaf, split_data)
+
+    def update_critic(
+        self,
+        data: ReplayBufferSamples,
+        alpha_val: Float[Array, "*batch 1"],
+        task_weights: Float[Array, "*batch 1"] | None = None,
+    ) -> tuple[Self, LogDict]:
+        key, critic_loss_key = jax.random.split(self.key)
+
+        # Sample a'
+        if self.split_critic_losses:
+            next_actions, next_action_log_probs = jax.vmap(
+                lambda x: self.actor.apply_fn(self.actor.params, x).sample_and_log_prob(
+                    seed=critic_loss_key
+                )
+            )(data.observations)
+            q_values = jax.vmap(self.critic.apply_fn, in_axes=(None, 0, 0))(
+                self.critic.target_params, data.next_observations, next_actions
+            )
+        else:
             next_actions, next_action_log_probs = self.actor.apply_fn(
                 self.actor.params, data.next_observations
             ).sample_and_log_prob(seed=critic_loss_key)
-            # Compute target Q values
             q_values = self.critic.apply_fn(
                 self.critic.target_params, data.next_observations, next_actions
             )
 
-            def critic_loss(
-                params: FrozenDict,
-            ) -> tuple[Float[Array, ""], Float[Array, ""]]:
-                # next_action_log_probs is (B,) shaped because of the sum(axis=1), while Q values are (B, 1)
-                min_qf_next_target = jnp.min(
-                    q_values, axis=0
-                ) - alpha_val * next_action_log_probs.reshape(-1, 1)
-                next_q_value = jax.lax.stop_gradient(
-                    data.rewards + (1 - data.dones) * self.gamma * min_qf_next_target
-                )
+        def critic_loss(
+            params: FrozenDict,
+            _data: ReplayBufferSamples,
+            _q_values: Float[Array, "#batch 1"],
+            _alpha_val: Float[Array, "#batch 1"],
+            _next_action_log_probs: Float[Array, " #batch"],
+            _task_weights: Float[Array, "#batch 1"] | None = None,
+        ) -> tuple[Float[Array, ""], Float[Array, ""]]:
+            # next_action_log_probs is (B,) shaped because of the sum(axis=1), while Q values are (B, 1)
+            min_qf_next_target = jnp.min(
+                _q_values, axis=0
+            ) - _alpha_val * _next_action_log_probs.reshape(-1, 1)
 
-                q_pred = self.critic.apply_fn(params, data.observations, data.actions)
-                if self.use_task_weights:
-                    assert task_weights is not None
-                    loss = (
-                        0.5
-                        * (task_weights * (q_pred - next_q_value) ** 2)
-                        .mean(axis=1)
-                        .sum()
-                    )
-                else:
-                    loss = 0.5 * ((q_pred - next_q_value) ** 2).mean(axis=1).sum()
-                return loss, q_pred.mean()
+            next_q_value = jax.lax.stop_gradient(
+                _data.rewards + (1 - _data.dones) * self.gamma * min_qf_next_target
+            )
 
+            q_pred = self.critic.apply_fn(params, _data.observations, _data.actions)
+
+            # HACK: Clipping Q values to approximate theoretical maximum for Metaworld
+            next_q_value = jnp.clip(next_q_value, -5000, 5000)
+            q_pred = jnp.clip(q_pred, -5000, 5000)
+
+            if _task_weights is not None:
+                loss = (_task_weights * (q_pred - next_q_value) ** 2).mean()
+            else:
+                loss = ((q_pred - next_q_value) ** 2).mean()
+            return loss, q_pred.mean()
+
+        if self.split_critic_losses:
+            (critic_loss_value, qf_values), critic_grads = jax.vmap(
+                jax.value_and_grad(critic_loss, has_aux=True),
+                in_axes=(None, 0, 0, 0, 0, 0),
+                out_axes=0,
+            )(
+                self.critic.params,
+                data,
+                q_values,
+                alpha_val,
+                next_action_log_probs,
+                task_weights,
+            )
+            flat_grads, _ = flatten_util.ravel_pytree(
+                jax.tree.map(lambda x: x.mean(axis=0), critic_grads)
+            )
+        else:
             (critic_loss_value, qf_values), critic_grads = jax.value_and_grad(
                 critic_loss, has_aux=True
-            )(_critic.params)
-            _critic = _critic.apply_gradients(grads=critic_grads)
-            flat_grads, _ = flatten_util.ravel_pytree(critic_grads)
-            return _critic, {
-                "losses/qf_values": qf_values,
-                "losses/qf_loss": critic_loss_value,
-                "metrics/critic_grad_magnitude": jnp.linalg.norm(flat_grads),
-            }
-
-        # --- Alpha loss ---
-
-        def update_alpha(
-            _alpha: TrainState, log_probs: Float[Array, " batch"]
-        ) -> tuple[
-            TrainState, Float[Array, "batch 1"], Float[Array, "batch 1"] | None, LogDict
-        ]:
-            def alpha_loss(params: FrozenDict) -> Float[Array, ""]:
-                log_alpha: jax.Array
-                log_alpha = task_ids @ params["params"]["log_alpha"].reshape(-1, 1)  # pyright: ignore [reportAttributeAccessIssue]
-                return (
-                    -log_alpha * (log_probs.reshape(-1, 1) + self.target_entropy)
-                ).mean()
-
-            alpha_loss_value, alpha_grads = jax.value_and_grad(alpha_loss)(
-                _alpha.params
-            )
-            _alpha = _alpha.apply_gradients(grads=alpha_grads)
-            alpha_vals = _alpha.apply_fn(_alpha.params, task_ids)
-            if self.use_task_weights:
-                task_weights = extract_task_weights(_alpha.params, task_ids)
-            else:
-                task_weights = None
-
-            return (
-                _alpha,
-                alpha_vals,
+            )(
+                self.critic.params,
+                data,
+                q_values,
+                alpha_val,
+                next_action_log_probs,
                 task_weights,
-                {
-                    "losses/alpha_loss": alpha_loss_value,
-                    "alpha": jnp.exp(_alpha.params["params"]["log_alpha"]).sum(),  # pyright: ignore [reportReturnType,reportArgumentType]
-                },
             )
+            flat_grads, _ = flatten_util.ravel_pytree(critic_grads)
 
-        # --- Actor loss --- & calls for the other losses
-        def actor_loss(params: FrozenDict):
-            action_samples, log_probs = self.actor.apply_fn(
-                params, data.observations
-            ).sample_and_log_prob(seed=actor_loss_key)
-
-            # HACK: Putting the other losses / grad updates inside this function for performance,
-            # so we can reuse the action_samples / log_probs while also doing alpha loss first
-            _alpha, _alpha_val, task_weights, alpha_logs = update_alpha(
-                self.alpha, log_probs
-            )
-            _alpha_val = jax.lax.stop_gradient(_alpha_val)
-            if task_weights is not None:
-                task_weights = jax.lax.stop_gradient(task_weights)
-            _critic, critic_logs = update_critic(self.critic, _alpha_val, task_weights)
-            logs = {**alpha_logs, **critic_logs}
-
-            q_values = _critic.apply_fn(
-                _critic.params, data.observations, action_samples
-            )
-            min_qf_values = jnp.min(q_values, axis=0)
-            if task_weights is not None:
-                loss = (
-                    task_weights
-                    * (_alpha_val * log_probs.reshape(-1, 1) - min_qf_values)
-                ).mean()
-            else:
-                loss = (_alpha_val * log_probs.reshape(-1, 1) - min_qf_values).mean()
-            return loss, (_alpha, _critic, logs)
-
-        (actor_loss_value, (alpha, critic, logs)), actor_grads = jax.value_and_grad(
-            actor_loss, has_aux=True
-        )(self.actor.params)
-        actor = self.actor.apply_gradients(grads=actor_grads)
-
-        flat_grads, _ = flatten_util.ravel_pytree(actor_grads)
-        logs["metrics/actor_grad_magnitude"] = jnp.linalg.norm(flat_grads)
-
-        flat_params_act, _ = flatten_util.ravel_pytree(self.actor.params)
-        logs["metrics/actor_params_norm"] = jnp.linalg.norm(flat_params_act)
-
-        flat_params_crit, _ = flatten_util.ravel_pytree(self.critic.params)
-        logs["metrics/critic_params_norm"] = jnp.linalg.norm(flat_params_crit)
-
-        critic: CriticTrainState
+        key, optimizer_key = jax.random.split(key)
+        critic = self.critic.apply_gradients(
+            grads=critic_grads,
+            optimizer_extra_args={
+                "task_losses": critic_loss_value,
+                "key": optimizer_key,
+            },
+        )
         critic = critic.replace(
             target_params=optax.incremental_update(
                 critic.params,
@@ -341,58 +356,172 @@ class MTSAC(OffPolicyAlgorithm[MTSACConfig]):
                 self.tau,
             )
         )
+        flat_params_crit, _ = flatten_util.ravel_pytree(critic.params)
 
-        self = self.replace(
-            key=key,
-            actor=actor,
-            critic=critic,
-            alpha=alpha,
+        return self.replace(critic=critic, key=key), {
+            "losses/qf_values": qf_values.mean(),
+            "losses/qf_loss": critic_loss_value.mean(),
+            "metrics/critic_grad_magnitude": jnp.linalg.norm(flat_grads),
+            "metrics/critic_params_norm": jnp.linalg.norm(flat_params_crit),
+        }
+
+    def update_actor(
+        self,
+        data: ReplayBufferSamples,
+        alpha_val: Float[Array, "batch 1"],
+        task_weights: Float[Array, "batch 1"] | None = None,
+    ) -> tuple[Self, Float[Array, " batch"], LogDict]:
+        key, actor_loss_key = jax.random.split(self.key)
+
+        def actor_loss(
+            params: FrozenDict,
+            _data: ReplayBufferSamples,
+            _alpha_val: Float[Array, "batch 1"],
+            _task_weights: Float[Array, "batch 1"] | None = None,
+        ):
+            action_samples, log_probs = self.actor.apply_fn(
+                params, _data.observations
+            ).sample_and_log_prob(seed=actor_loss_key)
+            log_probs = log_probs.reshape(-1, 1)
+
+            q_values = self.critic.apply_fn(
+                self.critic.params, _data.observations, action_samples
+            )
+            min_qf_values = jnp.min(q_values, axis=0)
+            if _task_weights is not None:
+                loss = (task_weights * (_alpha_val * log_probs - min_qf_values)).mean()
+            else:
+                loss = (_alpha_val * log_probs - min_qf_values).mean()
+            return loss, log_probs
+
+        if self.split_actor_losses:
+            (actor_loss_value, log_probs), actor_grads = jax.vmap(
+                jax.value_and_grad(actor_loss, has_aux=True),
+                in_axes=(None, 0, 0, 0),
+                out_axes=0,
+            )(self.actor.params, data, alpha_val, task_weights)
+            flat_grads, _ = flatten_util.ravel_pytree(
+                jax.tree.map(lambda x: x.mean(axis=0), actor_grads)
+            )
+        else:
+            (actor_loss_value, log_probs), actor_grads = jax.value_and_grad(
+                actor_loss, has_aux=True
+            )(self.actor.params, data, alpha_val, task_weights)
+            flat_grads, _ = flatten_util.ravel_pytree(actor_grads)
+
+        key, optimizer_key = jax.random.split(key)
+        actor = self.actor.apply_gradients(
+            grads=actor_grads,
+            optimizer_extra_args={
+                "task_losses": actor_loss_value,
+                "key": optimizer_key,
+            },
         )
 
-        return (self, {**logs, "losses/actor_loss": actor_loss_value})
+        flat_params_act, _ = flatten_util.ravel_pytree(actor.params)
+        logs = {
+            "losses/actor_loss": actor_loss_value.mean(),
+            "metrics/actor_grad_magnitude": jnp.linalg.norm(flat_grads),
+            "metrics/actor_params_norm": jnp.linalg.norm(flat_params_act),
+        }
+
+        return (self.replace(actor=actor, key=key), log_probs, logs)
+
+    def update_alpha(
+        self,
+        log_probs: Float[Array, " batch"],
+        task_ids: Float[npt.NDArray, " batch num_tasks"],
+    ) -> tuple[Self, LogDict]:
+        def alpha_loss(params: FrozenDict) -> Float[Array, ""]:
+            log_alpha: jax.Array
+            log_alpha = task_ids @ params["params"]["log_alpha"].reshape(-1, 1)  # pyright: ignore [reportAttributeAccessIssue]
+            return (-log_alpha * (log_probs + self.target_entropy)).mean()
+
+        alpha_loss_value, alpha_grads = jax.value_and_grad(alpha_loss)(
+            self.alpha.params
+        )
+        alpha = self.alpha.apply_gradients(grads=alpha_grads)
+
+        return self.replace(alpha=alpha), {
+            "losses/alpha_loss": alpha_loss_value,
+            "alpha": jnp.exp(alpha.params["params"]["log_alpha"]).sum(),  # pyright: ignore [reportArgumentType]
+        }
+
+    @jax.jit
+    def _update_inner(self, data: ReplayBufferSamples) -> tuple[Self, LogDict]:
+        task_ids = data.observations[..., -self.num_tasks :]
+
+        alpha_vals = self.alpha.apply_fn(self.alpha.params, task_ids)
+        if self.use_task_weights:
+            task_weights = extract_task_weights(self.alpha.params, task_ids)
+        else:
+            task_weights = None
+
+        actor_data = critic_data = data
+        actor_alpha_vals = critic_alpha_vals = alpha_vals
+        actor_task_weights = critic_task_weights = task_weights
+        alpha_val_indices = None
+
+        if self.split_critic_losses or self.split_actor_losses:
+            split_data, _ = self.split_data_by_tasks(data, task_ids)
+            split_alpha_vals, alpha_val_indices = self.split_data_by_tasks(
+                alpha_vals, task_ids
+            )
+            split_task_weights, _ = (
+                self.split_data_by_tasks(task_weights, task_ids)
+                if task_weights is not None
+                else (None, None)
+            )
+
+            if self.split_critic_losses:
+                critic_data = split_data
+                critic_alpha_vals = split_alpha_vals
+                critic_task_weights = split_task_weights
+
+            if self.split_actor_losses:
+                actor_data = split_data
+                actor_alpha_vals = split_alpha_vals
+                actor_task_weights = split_task_weights
+
+        self, critic_logs = self.update_critic(
+            critic_data, critic_alpha_vals, critic_task_weights
+        )
+        self, log_probs, actor_logs = self.update_actor(
+            actor_data, actor_alpha_vals, actor_task_weights
+        )
+        if self.split_actor_losses:
+            assert alpha_val_indices is not None
+            log_probs = self.unsplit_data_by_tasks(log_probs, alpha_val_indices)
+        self, alpha_logs = self.update_alpha(log_probs, task_ids)
+
+        # HACK: PCGrad logs
+        assert isinstance(self.critic.opt_state, tuple)
+        assert isinstance(self.actor.opt_state, tuple)
+        critic_optim_logs = (
+            {
+                f"metrics/critic_{key}": value
+                for key, value in self.critic.opt_state[0]._asdict().items()
+            }
+            if isinstance(self.critic.opt_state[0], PCGradState)
+            else {}
+        )
+        actor_optim_logs = (
+            {
+                f"metrics/actor_{key}": value
+                for key, value in self.actor.opt_state[0]._asdict().items()
+            }
+            if isinstance(self.actor.opt_state[0], PCGradState)
+            else {}
+        )
+
+        return self, {
+            **critic_logs,
+            **actor_logs,
+            **alpha_logs,
+            **critic_optim_logs,
+            **actor_optim_logs,
+        }
 
     @override
     def update(self, data: ReplayBufferSamples) -> tuple[Self, LogDict]:
         return self._update_inner(data)
-
-    def _split_critic_activations(
-        self, critic_acts: LayerActivationsDict
-    ) -> tuple[LayerActivationsDict, ...]:
-        return tuple(
-            {key: value[i] for key, value in critic_acts.items()}
-            for i in range(self.num_critics)
-        )
-
-    @jax.jit
-    def _get_intermediates(
-        self, data: ReplayBufferSamples
-    ) -> tuple[Self, Intermediates, Intermediates]:
-        key, critic_activations_key = jax.random.split(self.key, 2)
-
-        actions_dist: distrax.Distribution
-        batch_size = data.observations.shape[0]
-        actions_dist, actor_state = self.actor.apply_fn(
-            self.actor.params, data.observations, mutable="intermediates"
-        )
-        actions = actions_dist.sample(seed=critic_activations_key)
-
-        _, critic_state = self.critic.apply_fn(
-            self.critic.params, data.observations, actions, mutable="intermediates"
-        )
-
-        actor_intermediates = jax.tree.map(
-            lambda x: x.reshape(batch_size, -1), actor_state["intermediates"]
-        )
-        critic_intermediates = jax.tree.map(
-            lambda x: x.reshape(self.num_critics, batch_size, -1),
-            critic_state["intermediates"]["VmapQValueFunction_0"],
-        )
-
-        self = self.replace(key=key)
-
-        # HACK: Explicitly using the generated name of the Vmap Critic module here.
-        return (
-            self,
-            actor_intermediates,
-            critic_intermediates,
-        )

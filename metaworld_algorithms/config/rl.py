@@ -2,8 +2,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from metaworld_algorithms.envs import EnvConfig
-    from metaworld_algorithms.rl.algorithms import Algorithm
+    from metaworld_algorithms.rl.algorithms.base import Algorithm
+
+    from .envs import EnvConfig
 
 
 @dataclass(frozen=True)

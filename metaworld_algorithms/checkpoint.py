@@ -1,23 +1,21 @@
 # pyright: reportCallIssue=false, reportAttributeAccessIssue=false
 import random
-from typing import TypedDict, NotRequired, TYPE_CHECKING
-import gymnasium as gym
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
+import gymnasium as gym
 import numpy as np
 import orbax.checkpoint as ocp
 
-
-from mtrl.rl.buffers import MultiTaskReplayBuffer
-from mtrl.types import (
+from metaworld_algorithms.rl.buffers import AbstractReplayBuffer, MultiTaskReplayBuffer
+from metaworld_algorithms.types import (
     CheckpointMetadata,
     EnvCheckpoint,
-    LogDict,
-    RNGCheckpoint,
     ReplayBufferCheckpoint,
+    RNGCheckpoint,
 )
 
 if TYPE_CHECKING:
-    from mtrl.rl.algorithms.base import Algorithm
+    from metaworld_algorithms.rl.algorithms.base import Algorithm
 
 
 class Checkpoint(TypedDict):
@@ -56,8 +54,8 @@ def get_checkpoint_save_args(
     envs: gym.vector.VectorEnv,
     total_steps: int,
     episodes_ended: int,
-    run_timestamp: str,
-    buffer: MultiTaskReplayBuffer | None = None,
+    run_timestamp: str | None,
+    buffer: AbstractReplayBuffer | None = None,
 ) -> ocp.args.CheckpointArgs:
     if buffer is not None:
         rb_ckpt = buffer.checkpoint()

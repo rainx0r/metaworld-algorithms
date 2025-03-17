@@ -12,9 +12,12 @@ from flax.core import FrozenDict
 from flax.training.train_state import TrainState
 from jaxtyping import Array, Float, PRNGKeyArray
 
-from metaworld_algorithms.config.networks import ContinuousActionPolicyConfig, ValueFunctionConfig
+from metaworld_algorithms.config.envs import EnvConfig
+from metaworld_algorithms.config.networks import (
+    ContinuousActionPolicyConfig,
+    ValueFunctionConfig,
+)
 from metaworld_algorithms.config.rl import AlgorithmConfig
-from metaworld_algorithms.envs import EnvConfig
 from metaworld_algorithms.rl.networks import ContinuousActionPolicy, ValueFunction
 from metaworld_algorithms.types import (
     Action,

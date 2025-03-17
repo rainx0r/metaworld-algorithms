@@ -8,7 +8,7 @@ import numpy as np
 
 from metaworld_algorithms.types import Agent
 
-from .base import EnvConfig
+from metaworld_algorithms.config.envs import EnvConfig
 from metaworld.evaluation import evaluation
 
 
@@ -113,5 +113,5 @@ class MetaworldConfig(EnvConfig):
             vector_strategy="async",
             reward_function_version=self.reward_func_version,
             num_goals=self.num_goals,
-            reward_normalization_method=self.reward_normalization_method
+            reward_normalization_method=self.reward_normalization_method,
         )

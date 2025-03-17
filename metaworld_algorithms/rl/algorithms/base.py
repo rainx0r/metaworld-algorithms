@@ -10,15 +10,15 @@ import wandb
 from flax import struct
 
 from metaworld_algorithms.checkpoint import get_checkpoint_save_args
+from metaworld_algorithms.config.envs import EnvConfig
 from metaworld_algorithms.config.rl import (
     AlgorithmConfig,
-    OnPolicyTrainingConfig,
     OffPolicyTrainingConfig,
+    OnPolicyTrainingConfig,
     TrainingConfig,
 )
-from metaworld_algorithms.envs import EnvConfig
 from metaworld_algorithms.rl.buffers import (
-    MultiTaskReplayBuffer,
+    AbstractReplayBuffer,
     MultiTaskRolloutBuffer,
 )
 from metaworld_algorithms.types import (
@@ -67,9 +67,6 @@ class Algorithm(
     @abc.abstractmethod
     def eval_action(self, observations: Observation) -> Action: ...
 
-    # @abc.abstractmethod
-    # def get_initial_parameters(self) -> tuple[Dict, Dict, Dict]: ...
-
     @abc.abstractmethod
     def train(
         self,
@@ -89,16 +86,10 @@ class OffPolicyAlgorithm(
     Algorithm[AlgorithmConfigType, OffPolicyTrainingConfig, ReplayBufferSamples],
     Generic[AlgorithmConfigType],
 ):
+    @abc.abstractmethod
     def spawn_replay_buffer(
         self, env_config: EnvConfig, config: OffPolicyTrainingConfig, seed: int = 1
-    ) -> MultiTaskReplayBuffer:
-        return MultiTaskReplayBuffer(
-            total_capacity=config.buffer_size,
-            num_tasks=self.num_tasks,
-            env_obs_space=env_config.observation_space,
-            env_action_space=env_config.action_space,
-            seed=seed,
-        )
+    ) -> AbstractReplayBuffer: ...
 
     @override
     def train(
@@ -388,9 +379,9 @@ class OnPolicyAlgorithm(
                         self, logs = self.update(minibatch_rollout)
 
                     if config.target_kl is not None:
-                        assert "losses/approx_kl" in logs, (
-                            "Algorithm did not provide approximate KL div, but approx_kl is not None."
-                        )
+                        assert (
+                            "losses/approx_kl" in logs
+                        ), "Algorithm did not provide approximate KL div, but approx_kl is not None."
                         if logs["losses/approx_kl"] > config.target_kl:
                             print(
                                 f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"

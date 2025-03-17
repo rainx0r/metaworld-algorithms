@@ -1,8 +1,10 @@
-from jaxtyping import Float
+import abc
+from typing import override
 
 import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
+from jaxtyping import Float
 
 from metaworld_algorithms.types import (
     Action,
@@ -13,7 +15,197 @@ from metaworld_algorithms.types import (
 )
 
 
-class MultiTaskReplayBuffer:
+class AbstractReplayBuffer(abc.ABC):
+    """Replay buffer for the single-task environments.
+
+    Each sampling step, it samples a batch for each task, returning a batch of shape (batch_size,).
+    When pushing samples to the buffer, the buffer accepts inputs of arbitrary batch dimensions.
+    """
+
+    obs: Float[Observation, " buffer_size"]
+    actions: Float[Action, " buffer_size"]
+    rewards: Float[npt.NDArray, "buffer_size 1"]
+    next_obs: Float[Observation, " buffer_size"]
+    dones: Float[npt.NDArray, "buffer_size 1"]
+    pos: int
+
+    @abc.abstractmethod
+    def __init__(
+        self,
+        capacity: int,
+        env_obs_space: gym.Space,
+        env_action_space: gym.Space,
+        seed: int | None = None,
+    ) -> None:
+        ...
+
+    @abc.abstractmethod
+    def reset(self) -> None:
+        ...
+
+    @abc.abstractmethod
+    def checkpoint(self) -> ReplayBufferCheckpoint:
+        ...
+
+    @abc.abstractmethod
+    def load_checkpoint(self, ckpt: ReplayBufferCheckpoint) -> None:
+        ...
+
+    @abc.abstractmethod
+    def add(
+        self,
+        obs: Observation,
+        next_obs: Observation,
+        action: Action,
+        reward: Float[npt.NDArray, " *batch"],
+        done: Float[npt.NDArray, " *batch"],
+    ) -> None:
+        """Add a batch of samples to the buffer."""
+        ...
+
+    @abc.abstractmethod
+    def sample(self, batch_size: int) -> ReplayBufferSamples:
+        ...
+
+
+class ReplayBuffer(AbstractReplayBuffer):
+    """Replay buffer for the single-task environments.
+
+    Each sampling step, it samples a batch for each task, returning a batch of shape (batch_size,).
+    When pushing samples to the buffer, the buffer accepts inputs of arbitrary batch dimensions.
+    """
+
+    obs: Float[Observation, " buffer_size"]
+    actions: Float[Action, " buffer_size"]
+    rewards: Float[npt.NDArray, "buffer_size 1"]
+    next_obs: Float[Observation, " buffer_size"]
+    dones: Float[npt.NDArray, "buffer_size 1"]
+    pos: int
+
+    def __init__(
+        self,
+        capacity: int,
+        env_obs_space: gym.Space,
+        env_action_space: gym.Space,
+        seed: int | None = None,
+    ) -> None:
+        self.capacity = capacity
+        self._rng = np.random.default_rng(seed)
+        self._obs_shape = np.array(env_obs_space.shape).prod()
+        self._action_shape = np.array(env_action_space.shape).prod()
+        self.full = False
+
+        self.reset()  # Init buffer
+
+    @override
+    def reset(self):
+        """Reinitialize the buffer."""
+        self.obs = np.zeros((self.capacity, self._obs_shape), dtype=np.float32)
+        self.actions = np.zeros((self.capacity, self._action_shape), dtype=np.float32)
+        self.rewards = np.zeros((self.capacity, 1), dtype=np.float32)
+        self.next_obs = np.zeros((self.capacity, self._obs_shape), dtype=np.float32)
+        self.dones = np.zeros((self.capacity, 1), dtype=np.float32)
+        self.pos = 0
+
+    @override
+    def checkpoint(self) -> ReplayBufferCheckpoint:
+        return {
+            "data": {
+                "obs": self.obs,
+                "actions": self.actions,
+                "rewards": self.rewards,
+                "next_obs": self.next_obs,
+                "dones": self.dones,
+                "pos": self.pos,
+                "full": self.full,
+            },
+            "rng_state": self._rng.__getstate__(),
+        }
+
+    @override
+    def load_checkpoint(self, ckpt: ReplayBufferCheckpoint) -> None:
+        for key in ["data", "rng_state"]:
+            assert key in ckpt
+
+        for key in ["obs", "actions", "rewards", "next_obs", "dones", "pos", "full"]:
+            assert key in ckpt["data"]
+            setattr(self, key, ckpt["data"][key])
+
+        self._rng.__setstate__(ckpt["rng_state"])
+
+    @override
+    def add(
+        self,
+        obs: Observation,
+        next_obs: Observation,
+        action: Action,
+        reward: Float[npt.NDArray, " *batch"],
+        done: Float[npt.NDArray, " *batch"],
+    ) -> None:
+        """Add a batch of samples to the buffer."""
+        if obs.ndim >= 2:
+            assert (
+                obs.shape[0] == action.shape[0] == reward.shape[0] == done.shape[0]
+            ), "Batch size must be the same for all transition data."
+
+            # Flatten any batch dims
+            flat_obs = obs.reshape(-1, obs.shape[-1])
+            flat_next_obs = next_obs.reshape(-1, next_obs.shape[-1])
+            flat_action = action.reshape(-1, action.shape[-1])
+            flat_reward = reward.reshape(
+                -1, 1
+            )  # Keep the last dim as 1 for consistency
+            flat_done = done.reshape(-1, 1)  # Keep the last dim as 1 for consistency
+
+            # Calculate number of new transitions
+            n_transitions = len(flat_obs)
+
+            # Handle buffer wraparound
+            indices = np.arange(self.pos, self.pos + n_transitions) % self.capacity
+
+            # Store the transitions
+            self.obs[indices] = flat_obs
+            self.next_obs[indices] = flat_next_obs
+            self.actions[indices] = flat_action
+            self.rewards[indices] = flat_reward
+            self.dones[indices] = flat_done
+
+            self.pos = (self.pos + n_transitions) % self.capacity
+            if self.pos > self.capacity and not self.full:
+                self.full = True
+        else:
+            self.obs[self.pos] = obs.copy()
+            self.actions[self.pos] = action.copy()
+            self.next_obs[self.pos] = next_obs.copy()
+            self.dones[self.pos] = done.copy().reshape(-1, 1)
+            self.rewards[self.pos] = reward.copy().reshape(-1, 1)
+
+            self.pos += 1
+
+        if self.pos > self.capacity and not self.full:
+            self.full = True
+        self.pos %= self.capacity
+
+    @override
+    def sample(self, batch_size: int) -> ReplayBufferSamples:
+        sample_idx = self._rng.integers(
+            low=0,
+            high=max(self.pos if not self.full else self.capacity, batch_size),
+            size=(batch_size,),
+        )
+
+        batch = (
+            self.obs[sample_idx],
+            self.actions[sample_idx],
+            self.next_obs[sample_idx],
+            self.dones[sample_idx],
+            self.rewards[sample_idx],
+        )
+
+        return ReplayBufferSamples(*batch)
+
+
+class MultiTaskReplayBuffer(AbstractReplayBuffer):
     """Replay buffer for the multi-task benchmarks.
 
     Each sampling step, it samples a batch for each task, returning a batch of shape (batch_size, num_tasks,).
@@ -52,6 +244,7 @@ class MultiTaskReplayBuffer:
 
         self.reset(save_rewards=False)  # Init buffer
 
+    @override
     def reset(self, save_rewards=False):
         """Reinitialize the buffer."""
         self.obs = np.zeros(
@@ -73,6 +266,7 @@ class MultiTaskReplayBuffer:
             )
             self.traj_start = 0
 
+    @override
     def checkpoint(self) -> ReplayBufferCheckpoint:
         return {
             "data": {
@@ -87,6 +281,7 @@ class MultiTaskReplayBuffer:
             "rng_state": self._rng.__getstate__(),
         }
 
+    @override
     def load_checkpoint(self, ckpt: ReplayBufferCheckpoint) -> None:
         for key in ["data", "rng_state"]:
             assert key in ckpt
@@ -97,6 +292,7 @@ class MultiTaskReplayBuffer:
 
         self._rng.__setstate__(ckpt["rng_state"])
 
+    @override
     def add(
         self,
         obs: Float[Observation, " task"],
@@ -149,6 +345,7 @@ class MultiTaskReplayBuffer:
 
         return ReplayBufferSamples(*batch)
 
+    @override
     def sample(self, batch_size: int) -> ReplayBufferSamples:
         """Sample a batch of size `single_task_batch_size` for each task.
 

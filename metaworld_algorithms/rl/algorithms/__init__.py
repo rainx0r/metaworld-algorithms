@@ -17,7 +17,6 @@ def get_algorithm_for_config(config: AlgorithmConfig) -> type[Algorithm]:
 __all__ = [
     "Algorithm",
     "OffPolicyAlgorithm",
-    "Algorithm",
     "MTSAC",
     "MTPPO",
     "MTSACConfig",

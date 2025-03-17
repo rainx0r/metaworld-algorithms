@@ -1,6 +1,6 @@
 import flax.linen as nn
 
-import mtrl.config.nn
+import metaworld_algorithms.config.nn
 
 from .base import MLP as VanillaNetwork
 from .care import CARENetwork
@@ -12,21 +12,21 @@ from .soft_modules import SoftModularizationNetwork
 
 
 def get_nn_arch_for_config(
-    config: mtrl.config.nn.NeuralNetworkConfig,
+    config: metaworld_algorithms.config.nn.NeuralNetworkConfig,
 ) -> type[nn.Module]:
-    if type(config) is mtrl.config.nn.MultiHeadConfig:
+    if type(config) is metaworld_algorithms.config.nn.MultiHeadConfig:
         return MultiHeadNetwork
-    elif type(config) is mtrl.config.nn.SoftModulesConfig:
+    elif type(config) is metaworld_algorithms.config.nn.SoftModulesConfig:
         return SoftModularizationNetwork
-    elif type(config) is mtrl.config.nn.PaCoConfig:
+    elif type(config) is metaworld_algorithms.config.nn.PaCoConfig:
         return PaCoNetwork
-    elif type(config) is mtrl.config.nn.CAREConfig:
+    elif type(config) is metaworld_algorithms.config.nn.CAREConfig:
         return CARENetwork
-    elif type(config) is mtrl.config.nn.FiLMConfig:
+    elif type(config) is metaworld_algorithms.config.nn.FiLMConfig:
         return FiLMNetwork
-    elif type(config) is mtrl.config.nn.MOOREConfig:
+    elif type(config) is metaworld_algorithms.config.nn.MOOREConfig:
         return MOORENetwork
-    elif isinstance(config, mtrl.config.nn.NeuralNetworkConfig):
+    elif isinstance(config, metaworld_algorithms.config.nn.NeuralNetworkConfig):
         return VanillaNetwork
 
 
