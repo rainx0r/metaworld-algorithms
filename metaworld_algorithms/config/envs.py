@@ -4,7 +4,7 @@ from functools import cached_property
 
 import gymnasium as gym
 
-from metaworld_algorithms.types import Agent, MetaLearningAgent
+from metaworld_algorithms.types import Agent, GymVectorEnv, MetaLearningAgent
 
 
 @dataclass(frozen=True)
@@ -24,20 +24,20 @@ class EnvConfig(abc.ABC):
     def observation_space(self) -> gym.Space: ...
 
     @abc.abstractmethod
-    def spawn(self, seed: int = 1) -> gym.vector.VectorEnv: ...
+    def spawn(self, seed: int = 1) -> GymVectorEnv: ...
 
     @abc.abstractmethod
     def evaluate(
-        self, envs: gym.vector.VectorEnv, agent: Agent
+        self, envs: GymVectorEnv, agent: Agent
     ) -> tuple[float, float, dict[str, float]]: ...
 
 
 @dataclass(frozen=True)
 class MetaLearningEnvConfig(EnvConfig):
     @abc.abstractmethod
-    def spawn_test(self, seed: int = 1) -> gym.vector.VectorEnv: ...
+    def spawn_test(self, seed: int = 1) -> GymVectorEnv: ...
 
     @abc.abstractmethod
     def evaluate_metalearning(
-        self, envs: gym.vector.VectorEnv, agent: MetaLearningAgent
+        self, envs: GymVectorEnv, agent: MetaLearningAgent
     ) -> tuple[float, float, dict[str, float]]: ...

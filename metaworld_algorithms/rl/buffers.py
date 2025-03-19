@@ -1,10 +1,10 @@
 import abc
-from typing import override
 
 import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 from jaxtyping import Float
+from typing import override
 
 from metaworld_algorithms.types import (
     Action,
@@ -36,20 +36,16 @@ class AbstractReplayBuffer(abc.ABC):
         env_obs_space: gym.Space,
         env_action_space: gym.Space,
         seed: int | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abc.abstractmethod
-    def reset(self) -> None:
-        ...
+    def reset(self) -> None: ...
 
     @abc.abstractmethod
-    def checkpoint(self) -> ReplayBufferCheckpoint:
-        ...
+    def checkpoint(self) -> ReplayBufferCheckpoint: ...
 
     @abc.abstractmethod
-    def load_checkpoint(self, ckpt: ReplayBufferCheckpoint) -> None:
-        ...
+    def load_checkpoint(self, ckpt: ReplayBufferCheckpoint) -> None: ...
 
     @abc.abstractmethod
     def add(
@@ -64,8 +60,7 @@ class AbstractReplayBuffer(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def sample(self, batch_size: int) -> ReplayBufferSamples:
-        ...
+    def sample(self, batch_size: int) -> ReplayBufferSamples: ...
 
 
 class ReplayBuffer(AbstractReplayBuffer):
@@ -382,6 +377,46 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
         return ReplayBufferSamples(*batch)
 
 
+def compute_gae(
+    rollouts: Rollout,
+    gamma: float,
+    gae_lambda: float,
+    last_values: Float[npt.NDArray, " task"],
+    dones: Float[npt.NDArray, " task"],
+) -> Rollout:
+    assert rollouts.values is not None
+
+    last_values = last_values.reshape(-1, 1)
+    dones = dones.reshape(-1, 1)
+
+    advantages = np.zeros_like(rollouts.rewards)
+
+    # Adapted from https://github.com/openai/baselines/blob/master/baselines/ppo2/runner.py
+    last_gae_lamda, returns = 0, None
+    num_rollout_steps = rollouts.observations.shape[0]
+    for timestep in reversed(range(num_rollout_steps)):
+        if timestep == num_rollout_steps - 1:
+            next_nonterminal = 1.0 - rollouts.dones
+            next_values = last_values
+        else:
+            next_nonterminal = 1.0 - rollouts.dones[timestep + 1]
+            next_values = rollouts.values[timestep + 1]
+        delta = (
+            rollouts.rewards[timestep]
+            + next_nonterminal * gamma * next_values
+            - rollouts.values[timestep]
+        )
+        advantages[timestep] = last_gae_lamda = (
+            delta + next_nonterminal * gamma * gae_lambda * last_gae_lamda
+        )
+        returns = advantages + rollouts.values
+
+    return rollouts._replace(
+        returns=returns,
+        advantages=advantages,
+    )
+
+
 class MultiTaskRolloutBuffer:
     num_rollout_steps: int
     num_tasks: int
@@ -487,6 +522,16 @@ class MultiTaskRolloutBuffer:
         gamma: float = 0.99,
         gae_lambda: float = 0.97,
     ) -> Rollout:
+        rollouts = Rollout(
+            self.observations,
+            self.actions,
+            self.rewards,
+            self.dones,
+            self.log_probs,
+            self.means,
+            self.stds,
+            self.values,
+        )
         if compute_advantages:
             assert (
                 last_values is not None
@@ -497,42 +542,9 @@ class MultiTaskRolloutBuffer:
             assert not np.all(
                 self.values == np.zeros_like(self.values)
             ), "Values must have been pushed to the buffer if compute_advantages=True."
-            last_values = last_values.reshape(-1, 1)
-            dones = dones.reshape(-1, 1)
+            rollouts = compute_gae(rollouts, gamma, gae_lambda, last_values, dones)
+            rollouts = rollouts._replace(
+                episode_returns=rollouts.rewards.mean(axis=1).sum(axis=0).mean()
+            )
 
-            advantages = np.zeros_like(self.rewards)
-
-            # Adapted from https://github.com/openai/baselines/blob/master/baselines/ppo2/runner.py
-            last_gae_lamda = 0
-            for timestep in reversed(range(self.num_rollout_steps)):
-                if timestep == self.num_rollout_steps - 1:
-                    next_nonterminal = 1.0 - self.dones
-                    next_values = last_values
-                else:
-                    next_nonterminal = 1.0 - self.dones[timestep + 1]
-                    next_values = self.values[timestep + 1]
-                delta = (
-                    self.rewards[timestep]
-                    + next_nonterminal * gamma * next_values
-                    - self.values[timestep]
-                )
-                advantages[timestep] = last_gae_lamda = (
-                    delta + next_nonterminal * gamma * gae_lambda * last_gae_lamda
-                )
-            returns = advantages + self.values
-        else:
-            returns = None
-            advantages = None
-
-        return Rollout(
-            self.observations,
-            self.actions,
-            self.rewards,
-            self.dones,
-            self.log_probs,
-            self.means,
-            self.stds,
-            self.values,
-            returns,
-            advantages,
-        )
+        return rollouts

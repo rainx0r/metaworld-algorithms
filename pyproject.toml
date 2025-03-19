@@ -3,7 +3,7 @@ name = "metaworld-algorithms"
 version = "0.1.0"
 description = "Implementations of Multi-Task and Meta-Learning baselines for the Metaworld benchmark"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "gymnasium>=1.0.0",
     "metaworld",

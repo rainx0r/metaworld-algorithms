@@ -46,7 +46,13 @@ class OnPolicyTrainingConfig(TrainingConfig):
 class MetaLearningTrainingConfig(TrainingConfig):
     meta_batch_size: int = 20
     rollouts_per_task: int = 10
+    evaluate_on_train: bool = False
 
     compute_advantages: bool = True
     gae_lambda: float = 0.97
     target_kl: float | None = None
+
+
+@dataclass(frozen=True)
+class GradientBasedMetaLearningTrainingConfig(MetaLearningTrainingConfig):
+    num_inner_gradient_steps: int = 1

@@ -2,7 +2,6 @@
 import random
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-import gymnasium as gym
 import numpy as np
 import orbax.checkpoint as ocp
 
@@ -10,6 +9,7 @@ from metaworld_algorithms.rl.buffers import AbstractReplayBuffer, MultiTaskRepla
 from metaworld_algorithms.types import (
     CheckpointMetadata,
     EnvCheckpoint,
+    GymVectorEnv,
     ReplayBufferCheckpoint,
     RNGCheckpoint,
 )
@@ -26,11 +26,11 @@ class Checkpoint(TypedDict):
     metadata: CheckpointMetadata
 
 
-def checkpoint_envs(envs: gym.vector.VectorEnv) -> list[tuple[str, dict]]:
-    return envs.call("get_checkpoint")
+def checkpoint_envs(envs: GymVectorEnv) -> list[tuple[str, dict]]:
+    return envs.call("get_checkpoint")  # pyright: ignore [reportReturnType]
 
 
-def load_env_checkpoints(envs: gym.vector.VectorEnv, env_ckpts: list[tuple[str, dict]]):
+def load_env_checkpoints(envs: GymVectorEnv, env_ckpts: list[tuple[str, dict]]):
     envs.call("load_checkpoint", env_ckpts)
 
 
@@ -51,7 +51,7 @@ def get_agent_checkpoint_restore_args(agent: "Algorithm") -> ocp.args.Checkpoint
 
 def get_checkpoint_save_args(
     agent: "Algorithm",
-    envs: gym.vector.VectorEnv,
+    envs: GymVectorEnv,
     total_steps: int,
     episodes_ended: int,
     run_timestamp: str | None,

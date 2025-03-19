@@ -3,16 +3,17 @@ import time
 from collections import deque
 from typing import Deque, Generic, Self, TypeVar, override
 
-import gymnasium as gym
 import numpy as np
+import numpy.typing as npt
 import orbax.checkpoint as ocp
 import wandb
 from flax import struct
 
 from metaworld_algorithms.checkpoint import get_checkpoint_save_args
-from metaworld_algorithms.config.envs import EnvConfig
+from metaworld_algorithms.config.envs import EnvConfig, MetaLearningEnvConfig
 from metaworld_algorithms.config.rl import (
     AlgorithmConfig,
+    GradientBasedMetaLearningTrainingConfig,
     MetaLearningTrainingConfig,
     OffPolicyTrainingConfig,
     OnPolicyTrainingConfig,
@@ -26,8 +27,10 @@ from metaworld_algorithms.types import (
     Action,
     Agent,
     CheckpointMetadata,
+    GymVectorEnv,
     LogDict,
     LogProb,
+    MetaLearningAgent,
     Observation,
     ReplayBufferCheckpoint,
     ReplayBufferSamples,
@@ -37,18 +40,23 @@ from metaworld_algorithms.types import (
 
 AlgorithmConfigType = TypeVar("AlgorithmConfigType", bound=AlgorithmConfig)
 TrainingConfigType = TypeVar("TrainingConfigType", bound=TrainingConfig)
-DataType = TypeVar("DataType", ReplayBufferSamples, Rollout)
+EnvConfigType = TypeVar("EnvConfigType", bound=EnvConfig)
+MetaLearningTrainingConfigType = TypeVar(
+    "MetaLearningTrainingConfigType", bound=MetaLearningTrainingConfig
+)
+DataType = TypeVar("DataType", ReplayBufferSamples, Rollout, list[Rollout])
 
 
 class Algorithm(
     abc.ABC,
     Agent,
-    Generic[AlgorithmConfigType, TrainingConfigType, DataType],
+    Generic[AlgorithmConfigType, TrainingConfigType, EnvConfigType, DataType],
     struct.PyTreeNode,
 ):
     """Based on https://github.com/kevinzakka/nanorl/blob/main/nanorl/agent.py"""
 
     num_tasks: int = struct.field(pytree_node=False)
+    gamma: float = struct.field(pytree_node=False)
 
     @staticmethod
     @abc.abstractmethod
@@ -72,8 +80,8 @@ class Algorithm(
     def train(
         self,
         config: TrainingConfigType,
-        envs: gym.vector.VectorEnv,
-        env_config: EnvConfig,
+        envs: GymVectorEnv,
+        env_config: EnvConfigType,
         run_timestamp: str | None = None,
         seed: int = 1,
         track: bool = True,
@@ -84,27 +92,233 @@ class Algorithm(
 
 
 class MetaLearningAlgorithm(
-    Algorithm[AlgorithmConfigType, MetaLearningTrainingConfig, Rollout],
-    Generic[AlgorithmConfigType],
+    Algorithm[
+        AlgorithmConfigType,
+        MetaLearningTrainingConfigType,
+        MetaLearningEnvConfig,
+        DataType,
+    ],
+    Generic[AlgorithmConfigType, MetaLearningTrainingConfigType, DataType],
 ):
-    @override
+    class Wrapped(MetaLearningAgent, abc.ABC):
+        """Wrapper around the object to expose an OOP mutable interface compatible with
+        Metaworld's metalearning_evaluation.
+
+        Should've probably just made Metaworld's interface FP-friendly instead...
+        But maybe this way we can just discard all adaptation and stuff that happens
+        at eval time."""
+
+        def __init__(self, agent: "MetaLearningAlgorithm"):
+            self.agent = agent
+
+        def unwrap(self) -> "MetaLearningAlgorithm":
+            return self.agent
+
+        @abc.abstractmethod
+        def adapt_action(
+            self, observations: npt.NDArray[np.float64]
+        ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]: ...
+
+        @abc.abstractmethod
+        def adapt(self, rollouts: Rollout) -> None: ...
+
+        @abc.abstractmethod
+        def eval_action(
+            self, observations: npt.NDArray[np.float64]
+        ) -> npt.NDArray[np.float64]: ...
+
+    @abc.abstractmethod
+    def wrap(self) -> MetaLearningAgent: ...
+
+    @abc.abstractmethod
     def train(
         self,
-        config: MetaLearningTrainingConfig,
-        envs: gym.vector.VectorEnv,
-        env_config: EnvConfig,
+        config: MetaLearningTrainingConfigType,
+        envs: GymVectorEnv,
+        env_config: MetaLearningEnvConfig,
         run_timestamp: str | None = None,
         seed: int = 1,
         track: bool = True,
         checkpoint_manager: ocp.CheckpointManager | None = None,
         checkpoint_metadata: CheckpointMetadata | None = None,
-        buffer_checkpoint: RolloutBufferCheckpoint | None = None,
+        buffer_checkpoint: ReplayBufferCheckpoint | None = None,
+    ) -> Self: ...
+
+
+class GradientBasedMetaLearningAlgorithm(
+    MetaLearningAlgorithm[AlgorithmConfigType, GradientBasedMetaLearningTrainingConfig, list[Rollout]],
+    Generic[AlgorithmConfigType],
+):
+    @abc.abstractmethod
+    def sample_action_dist_and_value(
+        self, observation: Observation
+    ) -> tuple[Self, Action, LogProb, Action, Action, Value]: ...
+
+    def spawn_rollout_buffer(
+        self,
+        env_config: EnvConfig,
+        training_config: GradientBasedMetaLearningTrainingConfig, 
+        seed: int | None = None,
+    ) -> MultiTaskRolloutBuffer:
+        return MultiTaskRolloutBuffer(
+            num_tasks=training_config.meta_batch_size,
+            num_rollout_steps=training_config.rollouts_per_task * env_config.max_episode_steps,
+            env_obs_space=env_config.observation_space,
+            env_action_space=env_config.action_space,
+            seed=seed,
+        )
+
+    @abc.abstractmethod
+    def adapt(self, rollouts: Rollout) -> Self: ...
+
+    @abc.abstractmethod
+    def init_multitask_policy(self) -> Self: ...
+
+    @override
+    def train(
+        self,
+        config: GradientBasedMetaLearningTrainingConfig,
+        envs: GymVectorEnv,
+        env_config: MetaLearningEnvConfig,
+        run_timestamp: str | None = None,
+        seed: int = 1,
+        track: bool = True,
+        checkpoint_manager: ocp.CheckpointManager | None = None,
+        checkpoint_metadata: CheckpointMetadata | None = None,
+        buffer_checkpoint: ReplayBufferCheckpoint | None = None,
     ) -> Self:
-        ...
+        start_step, episodes_ended = 0, 0
+
+        if checkpoint_metadata is not None:
+            start_step = checkpoint_metadata["step"]
+            episodes_ended = checkpoint_metadata["episodes_ended"]
+
+        rollout_buffer = self.spawn_rollout_buffer(env_config, config, seed)
+
+        # NOTE: We assume that eval evns are deterministically initialised and there's no state
+        # that needs to be carried over when they're used.
+        eval_envs = env_config.spawn_test(seed)
+
+        obs, _ = zip(*envs.call("sample_tasks"))
+        obs = np.stack(obs)
+
+        start_time = time.time()
+
+        steps_per_iter = (
+            config.meta_batch_size
+            * config.rollouts_per_task
+            * env_config.max_episode_steps
+        )
+        for _iter in range(start_step, config.total_steps // steps_per_iter):  # Outer step
+            global_step = _iter * steps_per_iter
+            print(f"Iteration {_iter}, Global num of steps {global_step}")
+            self = self.init_multitask_policy()
+            all_rollouts: list[Rollout] = []
+
+            # Sampling step
+            # Collect num_inner_gradient_steps D datasets + collect 1 D' dataset
+            for _step in range(config.num_inner_gradient_steps + 1):
+                print(f"- Collecting inner step {_step}")
+                while not rollout_buffer.ready:
+                    self, actions, log_probs, means, stds, values = (
+                        self.sample_action_dist_and_value(obs)
+                    )
+
+                    next_obs, reward, _, truncated, _ = envs.step(actions)
+                    rollout_buffer.add(obs, actions, reward, truncated, values, log_probs, means, stds)
+                    obs = next_obs
+
+                rollouts = rollout_buffer.get(
+                    compute_advantages=True,
+                    gamma=self.gamma,
+                    gae_lambda=config.gae_lambda,
+                    # TODO: maybe we should bring LinearFeatureBaseline / advantage norm back?
+                    # fit_baseline=config.fit_baseline,
+                    # normalize_advantages=True,
+                )
+                all_rollouts.append(rollouts)
+                rollout_buffer.reset()
+
+                # Inner policy update for the sake of sampling close to adapted policy during the
+                # computation of the objective.
+                if _step < config.num_inner_gradient_steps:
+                    print(f"- Adaptation step {_step}")
+                    self = self.adapt(rollouts)
+
+            assert all_rollouts[-1].episode_returns is not None
+            mean_episodic_return = all_rollouts[-1].episode_returns
+            print("- Mean episodic return: ", mean_episodic_return)
+            if track:
+                wandb.log(
+                    {"charts/mean_episodic_returns": mean_episodic_return},
+                    step=global_step,
+                )
+
+            # Outer policy update
+            print("- Computing outer step")
+            self, logs = self.update(all_rollouts)
+
+            # Evaluation
+            if global_step % config.evaluation_frequency == 0 and global_step > 0:
+                print("- Evaluating on the test set...")
+                eval_success_rate, eval_mean_return, eval_success_rate_per_task = (
+                    env_config.evaluate_metalearning(eval_envs, self.wrap())
+                )
+
+                logs["charts/mean_success_rate"] = float(eval_success_rate)
+                logs["charts/mean_evaluation_return"] = float(eval_mean_return)
+                for task_name, success_rate in eval_success_rate_per_task.items():
+                    logs[f"charts/{task_name}_success_rate"] = float(success_rate)
+
+                if config.evaluate_on_train:
+                    print("- Evaluating on the train set...")
+                    # num_evals = (
+                    #     len(benchmark.train_classes) * config.num_evaluation_goals
+                    # ) // config.meta_batch_size
+                    _, _, eval_success_rate_per_train_task = (
+                        env_config.evaluate_metalearning(
+                            envs=envs,
+                            agent=self.wrap(),
+                        )
+                    )
+                    for (
+                        task_name,
+                        success_rate,
+                    ) in eval_success_rate_per_train_task.items():
+                        logs[f"charts/{task_name}_train_success_rate"] = float(
+                            success_rate
+                        )
+
+                    envs.call("toggle_terminate_on_success", False)
+
+                if checkpoint_manager is not None:
+                    checkpoint_manager.save(
+                        global_step,
+                        args=get_checkpoint_save_args(
+                            self, envs, global_step, episodes_ended, run_timestamp
+                        ),
+                        metrics={k.removeprefix("charts/"): v for k, v in logs.items()},
+                    )
+                    print("- Saved Model")
+
+            # Logging
+            print(logs)
+            sps = global_step / (time.time() - start_time)
+            print("- SPS: ", sps)
+            if track:
+                wandb.log({"charts/SPS": sps} | logs, step=global_step)
+
+            # Set tasks for next iteration
+            obs, _ = zip(*envs.call("sample_tasks"))
+            obs = np.stack(obs)
+
+        return self
 
 
 class OffPolicyAlgorithm(
-    Algorithm[AlgorithmConfigType, OffPolicyTrainingConfig, ReplayBufferSamples],
+    Algorithm[
+        AlgorithmConfigType, OffPolicyTrainingConfig, EnvConfig, ReplayBufferSamples
+    ],
     Generic[AlgorithmConfigType],
 ):
     @abc.abstractmethod
@@ -116,7 +330,7 @@ class OffPolicyAlgorithm(
     def train(
         self,
         config: OffPolicyTrainingConfig,
-        envs: gym.vector.VectorEnv,
+        envs: GymVectorEnv,
         env_config: EnvConfig,
         run_timestamp: str | None = None,
         seed: int = 1,
@@ -258,7 +472,7 @@ class OffPolicyAlgorithm(
 
 
 class OnPolicyAlgorithm(
-    Algorithm[AlgorithmConfigType, OnPolicyTrainingConfig, Rollout],
+    Algorithm[AlgorithmConfigType, OnPolicyTrainingConfig, EnvConfig, Rollout],
     Generic[AlgorithmConfigType],
 ):
     @abc.abstractmethod
@@ -284,7 +498,7 @@ class OnPolicyAlgorithm(
     def train(
         self,
         config: OnPolicyTrainingConfig,
-        envs: gym.vector.VectorEnv,
+        envs: GymVectorEnv,
         env_config: EnvConfig,
         run_timestamp: str | None = None,
         seed: int = 1,

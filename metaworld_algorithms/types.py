@@ -1,5 +1,6 @@
 from typing import Any, NamedTuple, Protocol, TypedDict
 
+import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 from jaxtyping import Array, Float
@@ -35,10 +36,11 @@ class Rollout(NamedTuple):
     log_probs: Float[LogProb, "task timestep"] | None = None
     means: Float[Action, "task timestep"] | None = None
     stds: Float[Action, "task timestep"] | None = None
+    values: Float[np.ndarray, "task timestep 1"] | None = None
 
     # Computed statistics about observed rewards
-    values: Float[np.ndarray, "task timestep 1"] | None = None
     returns: Float[np.ndarray, "task timestep 1"] | None = None
+    episode_returns: Float[np.ndarray, ""] | None = None
     advantages: Float[np.ndarray, "task timestep 1"] | None = None
 
 
@@ -72,4 +74,5 @@ class ReplayBufferCheckpoint(TypedDict):
     rng_state: Any
 
 
+type GymVectorEnv = gym.vector.AsyncVectorEnv | gym.vector.SyncVectorEnv
 type EnvCheckpoint = list[tuple[str, dict[str, Any]]]
