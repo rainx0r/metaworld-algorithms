@@ -2,6 +2,7 @@ import dataclasses
 from functools import partial
 from typing import Self, override
 
+import chex
 import distrax
 import gymnasium as gym
 import jax
@@ -22,7 +23,6 @@ from metaworld_algorithms.config.networks import (
 from metaworld_algorithms.config.rl import AlgorithmConfig
 from metaworld_algorithms.rl.algorithms.utils import MetaTrainState, TrainState
 from metaworld_algorithms.rl.networks import (
-    EnsembleMD,
     EnsembleMDContinuousActionPolicy,
     ValueFunction,
 )
@@ -86,17 +86,22 @@ class MAMLTRPOConfig(AlgorithmConfig):
     policy_config: ContinuousActionPolicyConfig = ContinuousActionPolicyConfig()
     policy_inner_lr: float = 0.1
     vf_config: ValueFunctionConfig = ValueFunctionConfig()
-    vf_inner_lr: float = 0.1
     meta_batch_size: int = 20
     delta: float = 0.01
     cg_iters: int = 10
     backtrack_ratio: float = 0.8
     max_backtrack_iters: int = 15
 
+    # vf training
+    clip_vf_loss: bool = True
+    clip_eps: float = 0.2
+    vf_num_gradient_steps: int = 32
+    vf_num_epochs: int = 16
+
 
 class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
     policy: MetaTrainState
-    vf: MetaTrainState
+    vf: TrainState
     key: PRNGKeyArray
     gamma: float = struct.field(pytree_node=False)
     delta: float = struct.field(pytree_node=False)
@@ -104,9 +109,10 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
     backtrack_ratio: float = struct.field(pytree_node=False)
     max_backtrack_iters: int = struct.field(pytree_node=False)
     policy_inner_lr: float = struct.field(pytree_node=False)
-    vf_inner_lr: float = struct.field(pytree_node=False)
-
-    # TODO: value function training
+    clip_eps: float = struct.field(pytree_node=False)
+    clip_vf_loss: bool = struct.field(pytree_node=False)
+    vf_num_gradient_steps: int = struct.field(pytree_node=False)
+    vf_num_epochs: int = struct.field(pytree_node=False)
 
     @override
     def init_ensemble_networks(self) -> Self:
@@ -115,12 +121,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
                 params=self.policy.expand_params(self.policy.params)
             )
         )
-        vf = self.vf.replace(
-            inner_train_state=self.vf.inner_train_state.replace(
-                params=self.vf.expand_params(self.vf.params)
-            )
-        )
-        return self.replace(policy=policy, vf=vf)
+        return self.replace(policy=policy)
 
     @override
     @staticmethod
@@ -145,7 +146,6 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             config=config.policy_config,
         )
         vf_cls = partial(ValueFunction, config=config.vf_config)
-        vf_net = EnsembleMD(vf_cls, num=config.meta_batch_size)
 
         dummy_obs = jnp.array(
             [
@@ -158,22 +158,15 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             tx=config.policy_config.network_config.optimizer.spawn(),
             inner_train_state=MetaTrainState.create(
                 params=None,
-                tx=optax.sgd(learning_rate=config.vf_inner_lr),
+                tx=optax.sgd(learning_rate=config.policy_inner_lr),
                 apply_fn=policy_net.apply,
             ),
             expand_params=policy_net.expand_params,
             apply_fn=None,
         )
-        vf = MetaTrainState.create(
+        vf = TrainState.create(
             params=vf_cls().init(vf_init_key, dummy_obs),
             tx=config.vf_config.network_config.optimizer.spawn(),
-            inner_train_state=MetaTrainState.create(
-                params=None,
-                # TODO: different for VF?
-                tx=optax.sgd(learning_rate=config.policy_inner_lr),
-                apply_fn=vf_net.apply,
-            ),
-            expand_params=vf_net.expand_params,
             apply_fn=vf_cls().apply,
         )
 
@@ -188,7 +181,10 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             vf=vf,
             key=algorithm_key,
             policy_inner_lr=config.policy_inner_lr,
-            vf_inner_lr=config.vf_inner_lr,
+            clip_eps=config.clip_eps,
+            clip_vf_loss=config.clip_vf_loss,
+            vf_num_gradient_steps=config.vf_num_gradient_steps,
+            vf_num_epochs=config.vf_num_epochs,
         )
 
     @override
@@ -388,9 +384,61 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             "losses/backtrack_steps": step,
         }
 
+    @jax.jit
+    def update_value_function(self, data: Rollout) -> tuple[Self, LogDict]:
+        def value_function_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
+            new_values: Float[Array, "batch_size 1"]
+            new_values = self.vf.apply_fn(params, data.observations)
+            chex.assert_equal_shape(new_values, data.returns)
+            assert data.values is None and data.returns is not None
+
+            if self.clip_vf_loss:
+                vf_loss_unclipped = (new_values - data.returns) ** 2
+                v_clipped = data.values + jnp.clip(
+                    new_values - data.values, -self.clip_eps, self.clip_eps
+                )
+                vf_loss_clipped = (v_clipped - data.returns) ** 2
+                vf_loss = 0.5 * jnp.maximum(vf_loss_unclipped, vf_loss_clipped).mean()
+            else:
+                vf_loss = 0.5 * ((new_values - data.returns) ** 2).mean()
+
+            return vf_loss, {
+                "losses/value_function": vf_loss,
+                "losses/values": new_values.mean(),
+            }
+
+        (_, logs), vf_grads = jax.value_and_grad(value_function_loss, has_aux=True)(
+            self.vf.params
+        )
+        value_function = self.vf.apply_gradients(grads=vf_grads)
+
+        return self.replace(value_function=value_function), logs
+
     @override
     def update(self, data: list[Rollout]) -> tuple[Self, LogDict]:
         # Update policy (MetaRL outer step)
         self, policy_logs = self.outer_step(data)
 
-        return self, policy_logs
+        # Flatten rollout into a big rollout
+        rollouts: Rollout = jax.tree.map(lambda *xs: np.stack(xs, axis=0), *data)
+        rollouts = Rollout(
+            *map(lambda x: x.reshape(-1, x.shape[-1]) if x else None, rollouts)  # pyright: ignore[reportArgumentType]
+        )
+        rollout_size = rollouts.observations.shape[0]
+        minibatch_size = rollout_size // self.vf_num_gradient_steps
+
+        vf_logs = {}
+        batch_inds = np.arange(rollout_size)
+        for epoch in range(self.vf_num_epochs):
+            np.random.shuffle(batch_inds)
+            for start in range(0, rollout_size, minibatch_size):
+                end = start + minibatch_size
+                minibatch_rollout = Rollout(
+                    *map(
+                        lambda x: x[batch_inds[start:end]] if x else None,  # pyright: ignore[reportArgumentType]
+                        rollouts,
+                    )
+                )
+                self, vf_logs = self.update_value_function(minibatch_rollout)
+
+        return self, policy_logs | vf_logs
