@@ -172,7 +172,7 @@ class GradientBasedMetaLearningAlgorithm(
     def adapt(self, rollouts: Rollout) -> Self: ...
 
     @abc.abstractmethod
-    def init_multitask_policy(self) -> Self: ...
+    def init_ensemble_networks(self) -> Self: ...
 
     @override
     def train(
@@ -212,7 +212,7 @@ class GradientBasedMetaLearningAlgorithm(
         for _iter in range(start_step, config.total_steps // steps_per_iter):  # Outer step
             global_step = _iter * steps_per_iter
             print(f"Iteration {_iter}, Global num of steps {global_step}")
-            self = self.init_multitask_policy()
+            self = self.init_ensemble_networks()
             all_rollouts: list[Rollout] = []
 
             # Sampling step
