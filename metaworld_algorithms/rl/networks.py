@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from functools import cached_property, partial
 
 import distrax
 import flax.linen as nn
@@ -105,10 +106,70 @@ class Ensemble(nn.Module):
         return ensemble()(*args)
 
 
+class EnsembleMDContinuousActionPolicy(nn.Module):
+    """Ensemble ContinusActionPolicy where there is "multiple data" as input.
+    That is, the in_axes in the vmap is not None, and axis 0 should correspond
+    to the ensemble num."""
+
+    # HACK: We need this rather than a truly generic EnsembleMD class cause of a bug
+    # distrax when using vmap and MultivariateNormalDiag
+    # - https://github.com/google-deepmind/distrax/issues/239
+    # - https://github.com/google-deepmind/distrax/issues/276
+    # Can probably just fix the bug and contribute upstream but this will do for now
+
+    action_dim: int
+    num: int
+    config: ContinuousActionPolicyConfig
+    last_act = None
+
+    @cached_property
+    def _net_cls(self) -> Callable[..., nn.Module]:
+        return partial(
+            get_nn_arch_for_config(self.config.network_config),
+            config=self.config.network_config,
+            head_dim=self.action_dim * 2,
+            head_kernel_init=uniform(1e-3),
+            head_bias_init=uniform(1e-3),
+        )
+
+    @nn.compact
+    def __call__(self, x: jax.Array) -> distrax.Distribution:
+        ensemble = nn.vmap(
+            self._net_cls,
+            variable_axes={"params": 0, "intermediates": 0},
+            split_rngs={"params": True, "dropout": True},
+            in_axes=0,
+            out_axes=0,
+            axis_size=self.num,
+        )
+        x = ensemble(name="ensemble")(x)
+
+        mean, log_std = jnp.split(x, 2, axis=-1)
+        log_std = jnp.clip(
+            log_std, a_min=self.config.log_std_min, a_max=self.config.log_std_max
+        )
+        std = jnp.exp(log_std)
+
+        if self.config.squash_tanh:
+            return TanhMultivariateNormalDiag(loc=mean, scale_diag=std)
+        return distrax.MultivariateNormalDiag(loc=mean, scale_diag=std)
+
+    def init_single(self, rng: PRNGKeyArray, x: jax.Array) -> nn.FrozenDict | dict:
+        return self._net_cls(parent=None).init(rng, x)
+
+
+    def expand_params(self, params: nn.FrozenDict | dict) -> nn.FrozenDict:
+        inner_params = jax.tree.map(
+            lambda x: jnp.broadcast_to(x, (self.num,) + x.shape), params
+        )["params"]
+        return nn.FrozenDict({"params": {"ensemble": inner_params}})
+
+
 class EnsembleMD(nn.Module):
     """Ensemble where there is "multiple data" as input.
     That is, the in_axes in the vmap is not None, and axis 0 should correspond
     to the ensemble num."""
+
     net_cls: nn.Module | Callable[..., nn.Module]
     num: int
 
@@ -124,7 +185,8 @@ class EnsembleMD(nn.Module):
         )
         return ensemble(name="ensemble")(*args)
 
-    @staticmethod
-    def expand_params(params: nn.FrozenDict | dict, axis_size: int) -> nn.FrozenDict:
-        inner_params = jax.tree.map(lambda x: jnp.broadcast_to(x, (axis_size,) + x.shape), params)["params"]
+    def expand_params(self, params: nn.FrozenDict | dict) -> nn.FrozenDict:
+        inner_params = jax.tree.map(
+            lambda x: jnp.broadcast_to(x, (self.num,) + x.shape), params
+        )["params"]
         return nn.FrozenDict({"params": {"ensemble": inner_params}})
