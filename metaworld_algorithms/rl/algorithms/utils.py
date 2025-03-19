@@ -1,8 +1,10 @@
 from typing import Any
 
 import optax
+from flax.core import FrozenDict
 from flax.linen.fp8_ops import OVERWRITE_WITH_GRADIENT
 from flax.training.train_state import TrainState as FlaxTrainState
+from typing_extensions import Callable
 
 
 class TrainState(FlaxTrainState):
@@ -41,3 +43,8 @@ class TrainState(FlaxTrainState):
             opt_state=new_opt_state,
             **kwargs,
         )
+
+
+class MetaTrainState(TrainState):
+    inner_train_state: TrainState
+    expand_params: Callable[[FrozenDict | dict], FrozenDict]

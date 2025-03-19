@@ -4,7 +4,6 @@ from collections import deque
 from typing import Deque, Generic, Self, TypeVar, override
 
 import numpy as np
-import numpy.typing as npt
 import orbax.checkpoint as ocp
 import wandb
 from flax import struct
@@ -61,7 +60,7 @@ class Algorithm(
     @staticmethod
     @abc.abstractmethod
     def initialize(
-        config: AlgorithmConfigType, env_config: EnvConfig, seed: int = 1
+        config: AlgorithmConfigType, env_config: EnvConfigType, seed: int = 1
     ) -> "Algorithm": ...
 
     @abc.abstractmethod
@@ -100,32 +99,11 @@ class MetaLearningAlgorithm(
     ],
     Generic[AlgorithmConfigType, MetaLearningTrainingConfigType, DataType],
 ):
-    class Wrapped(MetaLearningAgent, abc.ABC):
-        """Wrapper around the object to expose an OOP mutable interface compatible with
-        Metaworld's metalearning_evaluation.
-
-        Should've probably just made Metaworld's interface FP-friendly instead...
-        But maybe this way we can just discard all adaptation and stuff that happens
-        at eval time."""
-
-        def __init__(self, agent: "MetaLearningAlgorithm"):
-            self.agent = agent
-
-        def unwrap(self) -> "MetaLearningAlgorithm":
-            return self.agent
-
-        @abc.abstractmethod
-        def adapt_action(
-            self, observations: npt.NDArray[np.float64]
-        ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]: ...
-
-        @abc.abstractmethod
-        def adapt(self, rollouts: Rollout) -> None: ...
-
-        @abc.abstractmethod
-        def eval_action(
-            self, observations: npt.NDArray[np.float64]
-        ) -> npt.NDArray[np.float64]: ...
+    @staticmethod
+    @abc.abstractmethod
+    def initialize(
+        config: AlgorithmConfigType, env_config: MetaLearningEnvConfig, seed: int = 1
+    ) -> "MetaLearningAlgorithm": ...
 
     @abc.abstractmethod
     def wrap(self) -> MetaLearningAgent: ...
