@@ -504,7 +504,6 @@ class OnPolicyAlgorithm(
 
         obs, _ = envs.reset()
 
-        has_autoreset = np.full((envs.num_envs,), False)
         start_step, episodes_ended = 0, 0
 
         if checkpoint_metadata is not None:
@@ -523,6 +522,7 @@ class OnPolicyAlgorithm(
             )
 
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+            has_autoreset = np.logical_or(terminations, truncations)
             rollout_buffer.add(
                 obs,
                 actions,
@@ -534,7 +534,6 @@ class OnPolicyAlgorithm(
                 stds,
             )
 
-            has_autoreset = np.logical_or(terminations, truncations)
             for i, env_ended in enumerate(has_autoreset):
                 if env_ended:
                     global_episodic_return.append(infos["episode"]["r"][i])

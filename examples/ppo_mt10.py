@@ -41,7 +41,7 @@ def main() -> None:
             gamma=0.99,
             policy_config=ContinuousActionPolicyConfig(
                 network_config=VanillaNetworkConfig(
-                    optimizer=OptimizerConfig(max_grad_norm=1.0)
+                    optimizer=OptimizerConfig(max_grad_norm=1.0),
                 )
             ),
             vf_config=ValueFunctionConfig(
@@ -49,6 +49,7 @@ def main() -> None:
                     optimizer=OptimizerConfig(max_grad_norm=1.0),
                 )
             ),
+            clip_vf_loss=False,
         ),
         training_config=OnPolicyTrainingConfig(
             total_steps=int(2e7),
