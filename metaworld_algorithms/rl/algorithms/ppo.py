@@ -6,6 +6,7 @@ import distrax
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
+import jax.flatten_util
 import numpy as np
 from flax import struct
 from flax.core import FrozenDict
@@ -99,9 +100,7 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
 
     @override
     @staticmethod
-    def initialize(
-        config: PPOConfig, env_config: EnvConfig, seed: int = 1
-    ) -> "PPO":
+    def initialize(config: PPOConfig, env_config: EnvConfig, seed: int = 1) -> "PPO":
         assert isinstance(
             env_config.action_space, gym.spaces.Box
         ), "Non-box spaces currently not supported."
@@ -183,7 +182,14 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         return jax.device_get(_eval_action(self.policy, observations))
 
     def update_policy(self, data: Rollout) -> tuple[Self, LogDict]:
-        key, policy_loss_key = jax.random.split(self.key, 2)
+        assert data.advantages is not None
+
+        if self.normalize_advantages:
+            advantages = (data.advantages - data.advantages.mean()) / (
+                data.advantages.std() + 1e-8
+            )
+        else:
+            advantages = data.advantages
 
         def policy_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
             action_dist: distrax.Distribution
@@ -191,29 +197,22 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             assert data.log_probs is not None
 
             action_dist = self.policy.apply_fn(params, data.observations)
-            _, new_log_probs = action_dist.sample_and_log_prob(seed=policy_loss_key)  # pyright: ignore[reportAssignmentType]
+            new_log_probs = action_dist.log_prob(data.actions)  # pyright: ignore[reportAssignmentType]
             log_ratio = new_log_probs.reshape(data.log_probs.shape) - data.log_probs
             ratio = jnp.exp(log_ratio)
 
             # For logs
             approx_kl = jax.lax.stop_gradient(((ratio - 1) - log_ratio).mean())
             clip_fracs = jax.lax.stop_gradient(
-                jnp.array(jnp.abs(ratio - 1.0) > self.clip_eps).mean()
+                (jnp.abs(ratio - 1.0) > self.clip_eps).mean()
             )
-
-            if self.normalize_advantages:
-                advantages = (data.advantages - jnp.mean(data.advantages)) / (  # pyright: ignore[reportArgumentType]
-                    jnp.std(data.advantages) + 1e-8  # pyright: ignore[reportArgumentType]
-                )
-            else:
-                advantages = data.advantages
 
             pg_loss1 = -advantages * ratio  # pyright: ignore[reportOptionalOperand]
             pg_loss2 = -advantages * jnp.clip(  # pyright: ignore[reportOptionalOperand]
                 ratio, 1 - self.clip_eps, 1 + self.clip_eps
             )
-
             pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
+
             entropy_loss = action_dist.entropy().mean()
 
             return pg_loss - self.entropy_coefficient * entropy_loss, {
@@ -226,9 +225,14 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         (_, logs), policy_grads = jax.value_and_grad(policy_loss, has_aux=True)(
             self.policy.params
         )
+        policy_grads_flat, _ = jax.flatten_util.ravel_pytree(policy_grads)
         policy = self.policy.apply_gradients(grads=policy_grads)
+        policy_params_flat, _ = jax.flatten_util.ravel_pytree(policy.params)
 
-        return self.replace(policy=policy, key=key), logs
+        return self.replace(policy=policy), logs | {
+            "metrics/policy_grad_magnitude": jnp.linalg.norm(policy_grads_flat),
+            "metrics/policy_param_norm": jnp.linalg.norm(policy_params_flat),
+        }
 
     def update_value_function(self, data: Rollout) -> tuple[Self, LogDict]:
         def value_function_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
@@ -255,9 +259,14 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         (_, logs), vf_grads = jax.value_and_grad(value_function_loss, has_aux=True)(
             self.value_function.params
         )
+        vf_grads_flat, _ = jax.flatten_util.ravel_pytree(vf_grads)
         value_function = self.value_function.apply_gradients(grads=vf_grads)
+        vf_params_flat, _ = jax.flatten_util.ravel_pytree(value_function.params)
 
-        return self.replace(value_function=value_function), logs
+        return self.replace(value_function=value_function), logs | {
+            "metrics/vf_grad_magnitude": jnp.linalg.norm(vf_grads_flat),
+            "metrics/vf_param_norm": jnp.linalg.norm(vf_params_flat),
+        }
 
     @jax.jit
     def _update_inner(self, data: Rollout) -> tuple[Self, LogDict]:

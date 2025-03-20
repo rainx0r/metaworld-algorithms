@@ -392,7 +392,7 @@ def compute_gae(
     advantages = np.zeros_like(rollouts.rewards)
 
     # Adapted from https://github.com/openai/baselines/blob/master/baselines/ppo2/runner.py
-    last_gae_lamda, returns = 0, None
+    last_gae_lamda = 0
     num_rollout_steps = rollouts.observations.shape[0]
     for timestep in reversed(range(num_rollout_steps)):
         if timestep == num_rollout_steps - 1:
@@ -409,7 +409,8 @@ def compute_gae(
         advantages[timestep] = last_gae_lamda = (
             delta + next_nonterminal * gamma * gae_lambda * last_gae_lamda
         )
-        returns = advantages + rollouts.values
+
+    returns = advantages + rollouts.values
 
     return rollouts._replace(
         returns=returns,
@@ -422,15 +423,15 @@ class MultiTaskRolloutBuffer:
     num_tasks: int
     pos: int
 
-    observations: Float[Observation, "task timestep"]
-    actions: Float[Action, "task timestep"]
-    rewards: Float[npt.NDArray, "task timestep 1"]
-    dones: Float[npt.NDArray, "task timestep 1"]
+    observations: Float[Observation, "timestep task"]
+    actions: Float[Action, "timestep task"]
+    rewards: Float[npt.NDArray, "timestep task 1"]
+    dones: Float[npt.NDArray, "timestep task 1"]
 
-    values: Float[npt.NDArray, "task timestep 1"]
-    log_probs: Float[npt.NDArray, "task timestep 1"]
-    means: Float[Action, "task timestep"]
-    stds: Float[Action, "task timestep"]
+    values: Float[npt.NDArray, "timestep task 1"]
+    log_probs: Float[npt.NDArray, "timestep task 1"]
+    means: Float[Action, "timestep task"]
+    stds: Float[Action, "timestep task"]
 
     def __init__(
         self,

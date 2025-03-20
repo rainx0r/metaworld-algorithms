@@ -584,7 +584,7 @@ class OnPolicyAlgorithm(
 
                 # Flatten batch dims
                 rollouts = Rollout(
-                    *map(lambda x: x.reshape(-1, *x.shape[-2:]) if x is not None else None, rollouts)  # pyright: ignore[reportArgumentType]
+                    *map(lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None, rollouts)  # pyright: ignore[reportArgumentType]
                 )
 
                 rollout_size = rollouts.observations.shape[0]
