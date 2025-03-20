@@ -435,9 +435,6 @@ class OffPolicyAlgorithm(
                     if track:
                         wandb.log(eval_metrics, step=total_steps)
 
-                    # Reset envs again to exit eval mode
-                    obs, _ = envs.reset()
-
                     # Checkpointing
                     if checkpoint_manager is not None:
                         if not has_autoreset.all():
@@ -460,6 +457,11 @@ class OffPolicyAlgorithm(
                                 for k, v in eval_metrics.items()
                             },
                         )
+
+                    # Reset envs again to exit eval mode
+                    obs, _ = envs.reset()
+                    has_autoreset = np.full((envs.num_envs,), False)
+
         return self
 
 
@@ -652,9 +654,6 @@ class OnPolicyAlgorithm(
                     if track:
                         wandb.log(eval_metrics, step=total_steps)
 
-                    # Reset envs again to exit eval mode
-                    obs, _ = envs.reset()
-
                     # Checkpointing
                     if checkpoint_manager is not None:
                         if not has_autoreset.all():
@@ -676,5 +675,9 @@ class OnPolicyAlgorithm(
                                 for k, v in eval_metrics.items()
                             },
                         )
+
+                    # Reset envs again to exit eval mode
+                    obs, _ = envs.reset()
+                    has_autoreset = np.full((envs.num_envs,), False)
 
         return self
