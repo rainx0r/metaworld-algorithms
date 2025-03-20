@@ -5,13 +5,13 @@ import tyro
 
 from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
-    QValueFunctionConfig,
+    ValueFunctionConfig,
 )
-from metaworld_algorithms.config.nn import MOOREConfig
+from metaworld_algorithms.config.nn import VanillaNetworkConfig
 from metaworld_algorithms.config.optim import OptimizerConfig
-from metaworld_algorithms.config.rl import OffPolicyTrainingConfig
+from metaworld_algorithms.config.rl import OnPolicyTrainingConfig
 from metaworld_algorithms.envs import MetaworldConfig
-from metaworld_algorithms.rl.algorithms import MTSACConfig
+from metaworld_algorithms.rl.algorithms import PPOConfig
 from metaworld_algorithms.run import Run
 
 
@@ -29,36 +29,34 @@ def main() -> None:
     args = tyro.cli(Args)
 
     run = Run(
-        run_name="mt10_moore",
+        run_name="mt10_ppo",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldConfig(
             env_id="MT10",
             terminate_on_success=False,
         ),
-        algorithm=MTSACConfig(
+        algorithm=PPOConfig(
             num_tasks=10,
             gamma=0.99,
-            actor_config=ContinuousActionPolicyConfig(
-                network_config=MOOREConfig(
-                    num_tasks=10, optimizer=OptimizerConfig(lr=3e-4, max_grad_norm=1.0)
-                ),
-                log_std_min=-10,
-                log_std_max=2,
-            ),
-            critic_config=QValueFunctionConfig(
-                network_config=MOOREConfig(
-                    num_tasks=10,
-                    optimizer=OptimizerConfig(lr=3e-4, max_grad_norm=1.0),
+            policy_config=ContinuousActionPolicyConfig(
+                network_config=VanillaNetworkConfig(
+                    optimizer=OptimizerConfig(max_grad_norm=1.0)
                 )
             ),
-            temperature_optimizer_config=OptimizerConfig(lr=1e-4),
-            num_critics=2,
+            vf_config=ValueFunctionConfig(
+                network_config=VanillaNetworkConfig(
+                    optimizer=OptimizerConfig(max_grad_norm=1.0),
+                )
+            ),
         ),
-        training_config=OffPolicyTrainingConfig(
+        training_config=OnPolicyTrainingConfig(
             total_steps=int(2e7),
-            buffer_size=int(1e6),
-            batch_size=1280,
+            rollout_steps=10_000,
+            num_epochs=16,
+            num_gradient_steps=32,
+            gae_lambda=0.97,
+            target_kl=None,
         ),
         checkpoint=True,
         resume=args.resume,

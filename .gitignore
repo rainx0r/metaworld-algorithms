@@ -172,3 +172,8 @@ cython_debug/
 
 # direnv
 .envrc
+.direnv
+flake.nix
+flake.lock
+
+run_results/

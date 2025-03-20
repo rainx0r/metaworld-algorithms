@@ -7,8 +7,8 @@ from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
     QValueFunctionConfig,
 )
-from metaworld_algorithms.config.nn import MOOREConfig
-from metaworld_algorithms.config.optim import OptimizerConfig
+from metaworld_algorithms.config.nn import MultiHeadConfig
+from metaworld_algorithms.config.optim import PCGradConfig
 from metaworld_algorithms.config.rl import OffPolicyTrainingConfig
 from metaworld_algorithms.envs import MetaworldConfig
 from metaworld_algorithms.rl.algorithms import MTSACConfig
@@ -28,8 +28,10 @@ class Args:
 def main() -> None:
     args = tyro.cli(Args)
 
+    num_tasks = 10
+
     run = Run(
-        run_name="mt10_moore",
+        run_name="mt10_mtmhsac_pcgrad",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldConfig(
@@ -37,28 +39,26 @@ def main() -> None:
             terminate_on_success=False,
         ),
         algorithm=MTSACConfig(
-            num_tasks=10,
+            num_tasks=num_tasks,
             gamma=0.99,
             actor_config=ContinuousActionPolicyConfig(
-                network_config=MOOREConfig(
-                    num_tasks=10, optimizer=OptimizerConfig(lr=3e-4, max_grad_norm=1.0)
-                ),
-                log_std_min=-10,
-                log_std_max=2,
-            ),
-            critic_config=QValueFunctionConfig(
-                network_config=MOOREConfig(
-                    num_tasks=10,
-                    optimizer=OptimizerConfig(lr=3e-4, max_grad_norm=1.0),
+                network_config=MultiHeadConfig(
+                    num_tasks=num_tasks,
+                    optimizer=PCGradConfig(num_tasks=num_tasks, max_grad_norm=1.0),
                 )
             ),
-            temperature_optimizer_config=OptimizerConfig(lr=1e-4),
+            critic_config=QValueFunctionConfig(
+                network_config=MultiHeadConfig(
+                    num_tasks=num_tasks,
+                    optimizer=PCGradConfig(num_tasks=num_tasks, max_grad_norm=1.0),
+                )
+            ),
             num_critics=2,
         ),
         training_config=OffPolicyTrainingConfig(
-            total_steps=int(2e7),
-            buffer_size=int(1e6),
-            batch_size=1280,
+            total_steps=int(2_000_000 * num_tasks),
+            buffer_size=int(100_000 * num_tasks),
+            batch_size=128 * num_tasks,
         ),
         checkpoint=True,
         resume=args.resume,

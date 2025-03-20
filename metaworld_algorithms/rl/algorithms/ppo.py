@@ -76,7 +76,7 @@ def _sample_action_dist_and_value(
 
 
 @dataclass(frozen=True)
-class MTPPOConfig(AlgorithmConfig):
+class PPOConfig(AlgorithmConfig):
     policy_config: ContinuousActionPolicyConfig = ContinuousActionPolicyConfig()
     vf_config: ValueFunctionConfig = ValueFunctionConfig()
     clip_eps: float = 0.2
@@ -86,7 +86,7 @@ class MTPPOConfig(AlgorithmConfig):
     normalize_advantages: bool = True
 
 
-class MTPPO(OnPolicyAlgorithm[MTPPOConfig]):
+class PPO(OnPolicyAlgorithm[PPOConfig]):
     policy: TrainState
     value_function: TrainState
     key: PRNGKeyArray
@@ -100,8 +100,8 @@ class MTPPO(OnPolicyAlgorithm[MTPPOConfig]):
     @override
     @staticmethod
     def initialize(
-        config: MTPPOConfig, env_config: EnvConfig, seed: int = 1
-    ) -> "MTPPO":
+        config: PPOConfig, env_config: EnvConfig, seed: int = 1
+    ) -> "PPO":
         assert isinstance(
             env_config.action_space, gym.spaces.Box
         ), "Non-box spaces currently not supported."
@@ -137,7 +137,7 @@ class MTPPO(OnPolicyAlgorithm[MTPPOConfig]):
         print("Vf Arch:", jax.tree_util.tree_map(jnp.shape, value_function.params))
         print("Vf Params:", sum(x.size for x in jax.tree.leaves(value_function.params)))
 
-        return MTPPO(
+        return PPO(
             num_tasks=config.num_tasks,
             policy=policy,
             value_function=value_function,
@@ -187,20 +187,18 @@ class MTPPO(OnPolicyAlgorithm[MTPPOConfig]):
 
         def policy_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
             action_dist: distrax.Distribution
-            new_log_probs: Float[Array, " batch_size"]
+            new_log_probs: Float[Array, " *batch"]
+            assert data.log_probs is not None
 
             action_dist = self.policy.apply_fn(params, data.observations)
             _, new_log_probs = action_dist.sample_and_log_prob(seed=policy_loss_key)  # pyright: ignore[reportAssignmentType]
-            log_ratio = new_log_probs.reshape(-1, 1) - data.log_probs
+            log_ratio = new_log_probs.reshape(data.log_probs.shape) - data.log_probs
             ratio = jnp.exp(log_ratio)
 
             # For logs
             approx_kl = jax.lax.stop_gradient(((ratio - 1) - log_ratio).mean())
             clip_fracs = jax.lax.stop_gradient(
-                jnp.array(
-                    jnp.abs(ratio - 1.0) > self.clip_eps,
-                    dtype=jnp.float32,
-                ).mean()
+                jnp.array(jnp.abs(ratio - 1.0) > self.clip_eps).mean()
             )
 
             if self.normalize_advantages:
@@ -234,10 +232,10 @@ class MTPPO(OnPolicyAlgorithm[MTPPOConfig]):
 
     def update_value_function(self, data: Rollout) -> tuple[Self, LogDict]:
         def value_function_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
-            new_values: Float[Array, "batch_size 1"]
+            new_values: Float[Array, "*batch 1"]
             new_values = self.value_function.apply_fn(params, data.observations)
-            chex.assert_equal_shape(new_values, data.returns)
-            assert data.values is None and data.returns is not None
+            chex.assert_equal_shape((new_values, data.returns))
+            assert data.values is not None and data.returns is not None
 
             if self.clip_vf_loss:
                 vf_loss_unclipped = (new_values - data.returns) ** 2

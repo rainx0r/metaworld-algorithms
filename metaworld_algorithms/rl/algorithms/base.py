@@ -124,7 +124,9 @@ class MetaLearningAlgorithm(
 
 
 class GradientBasedMetaLearningAlgorithm(
-    MetaLearningAlgorithm[AlgorithmConfigType, GradientBasedMetaLearningTrainingConfig, list[Rollout]],
+    MetaLearningAlgorithm[
+        AlgorithmConfigType, GradientBasedMetaLearningTrainingConfig, list[Rollout]
+    ],
     Generic[AlgorithmConfigType],
 ):
     @abc.abstractmethod
@@ -135,12 +137,13 @@ class GradientBasedMetaLearningAlgorithm(
     def spawn_rollout_buffer(
         self,
         env_config: EnvConfig,
-        training_config: GradientBasedMetaLearningTrainingConfig, 
+        training_config: GradientBasedMetaLearningTrainingConfig,
         seed: int | None = None,
     ) -> MultiTaskRolloutBuffer:
         return MultiTaskRolloutBuffer(
             num_tasks=training_config.meta_batch_size,
-            num_rollout_steps=training_config.rollouts_per_task * env_config.max_episode_steps,
+            num_rollout_steps=training_config.rollouts_per_task
+            * env_config.max_episode_steps,
             env_obs_space=env_config.observation_space,
             env_action_space=env_config.action_space,
             seed=seed,
@@ -187,7 +190,11 @@ class GradientBasedMetaLearningAlgorithm(
             * config.rollouts_per_task
             * env_config.max_episode_steps
         )
-        for _iter in range(start_step, config.total_steps // steps_per_iter):  # Outer step
+
+        truncated = np.full((envs.num_envs,), False)
+        for _iter in range(
+            start_step, config.total_steps // steps_per_iter
+        ):  # Outer step
             global_step = _iter * steps_per_iter
             print(f"Iteration {_iter}, Global num of steps {global_step}")
             self = self.init_ensemble_networks()
@@ -203,13 +210,20 @@ class GradientBasedMetaLearningAlgorithm(
                     )
 
                     next_obs, reward, _, truncated, _ = envs.step(actions)
-                    rollout_buffer.add(obs, actions, reward, truncated, values, log_probs, means, stds)
+                    rollout_buffer.add(
+                        obs, actions, reward, truncated, values, log_probs, means, stds
+                    )
                     obs = next_obs
+
+                self, _, _, _, _, last_values = self.sample_action_dist_and_value(obs)
 
                 rollouts = rollout_buffer.get(
                     compute_advantages=True,
+                    compute_episode_returns=True,
                     gamma=self.gamma,
                     gae_lambda=config.gae_lambda,
+                    last_values=last_values,
+                    dones=truncated,
                     # TODO: maybe we should bring LinearFeatureBaseline / advantage norm back?
                     # fit_baseline=config.fit_baseline,
                     # normalize_advantages=True,
@@ -498,9 +512,6 @@ class OnPolicyAlgorithm(
             episodes_ended = checkpoint_metadata["episodes_ended"]
 
         rollout_buffer = self.spawn_rollout_buffer(env_config, config, seed)
-        # TODO:
-        # if buffer_checkpoint is not None:
-        #     rollout_buffer.load_checkpoint(buffer_checkpoint)
 
         start_time = time.time()
 
@@ -516,7 +527,7 @@ class OnPolicyAlgorithm(
                 obs,
                 actions,
                 rewards,
-                terminations or truncations,
+                has_autoreset.astype(np.float32),
                 values,
                 log_probs,
                 means,
@@ -566,12 +577,14 @@ class OnPolicyAlgorithm(
                     )
 
                 rollouts = rollout_buffer.get(
-                    config.compute_advantages, last_values, terminations or truncations
+                    config.compute_advantages,
+                    last_values=last_values,
+                    dones=has_autoreset.astype(np.float32),
                 )
 
                 # Flatten batch dims
                 rollouts = Rollout(
-                    *map(lambda x: x.reshape(-1, x.shape[-1]) if x else None, rollouts)  # pyright: ignore[reportArgumentType]
+                    *map(lambda x: x.reshape(-1, *x.shape[-2:]) if x is not None else None, rollouts)  # pyright: ignore[reportArgumentType]
                 )
 
                 rollout_size = rollouts.observations.shape[0]
@@ -585,7 +598,7 @@ class OnPolicyAlgorithm(
                         end = start + minibatch_size
                         minibatch_rollout = Rollout(
                             *map(
-                                lambda x: x[batch_inds[start:end]] if x else None,  # pyright: ignore[reportArgumentType]
+                                lambda x: x[batch_inds[start:end]] if x is not None else None,  # pyright: ignore[reportArgumentType]
                                 rollouts,
                             )
                         )
@@ -606,55 +619,54 @@ class OnPolicyAlgorithm(
                 if track:
                     wandb.log(logs, step=total_steps)
 
-            # Evaluation
-            if (
-                config.evaluation_frequency > 0
-                and episodes_ended % config.evaluation_frequency == 0
-                and has_autoreset.any()
-                and global_step > 0
-            ):
-                mean_success_rate, mean_returns, mean_success_per_task = (
-                    env_config.evaluate(envs, self)
-                )
-                eval_metrics = {
-                    "charts/mean_success_rate": float(mean_success_rate),
-                    "charts/mean_evaluation_return": float(mean_returns),
-                } | {
-                    f"charts/{task_name}_success_rate": float(success_rate)
-                    for task_name, success_rate in mean_success_per_task.items()
-                }
-                print(
-                    f"total_steps={total_steps}, mean evaluation success rate: {mean_success_rate:.4f}"
-                    + f" return: {mean_returns:.4f}"
-                )
-
-                if track:
-                    wandb.log(eval_metrics, step=total_steps)
-
-                # Reset envs again to exit eval mode
-                obs, _ = envs.reset()
-
-                # Checkpointing
-                if checkpoint_manager is not None:
-                    if not has_autoreset.all():
-                        raise NotImplementedError(
-                            "Checkpointing currently doesn't work for the case where evaluation is run before all envs have finished their episodes / are about to be reset."
-                        )
-
-                    checkpoint_manager.save(
-                        total_steps,
-                        args=get_checkpoint_save_args(
-                            self,
-                            envs,
-                            global_step,
-                            episodes_ended,
-                            run_timestamp,
-                            # buffer=replay_buffer, TODO:
-                        ),
-                        metrics={
-                            k.removeprefix("charts/"): v
-                            for k, v in eval_metrics.items()
-                        },
+                # Evaluation
+                if (
+                    config.evaluation_frequency > 0
+                    and episodes_ended % config.evaluation_frequency == 0
+                    and has_autoreset.any()
+                    and global_step > 0
+                ):
+                    mean_success_rate, mean_returns, mean_success_per_task = (
+                        env_config.evaluate(envs, self)
                     )
+                    eval_metrics = {
+                        "charts/mean_success_rate": float(mean_success_rate),
+                        "charts/mean_evaluation_return": float(mean_returns),
+                    } | {
+                        f"charts/{task_name}_success_rate": float(success_rate)
+                        for task_name, success_rate in mean_success_per_task.items()
+                    }
+                    print(
+                        f"total_steps={total_steps}, mean evaluation success rate: {mean_success_rate:.4f}"
+                        + f" return: {mean_returns:.4f}"
+                    )
+
+                    if track:
+                        wandb.log(eval_metrics, step=total_steps)
+
+                    # Reset envs again to exit eval mode
+                    obs, _ = envs.reset()
+
+                    # Checkpointing
+                    if checkpoint_manager is not None:
+                        if not has_autoreset.all():
+                            raise NotImplementedError(
+                                "Checkpointing currently doesn't work for the case where evaluation is run before all envs have finished their episodes / are about to be reset."
+                            )
+
+                        checkpoint_manager.save(
+                            total_steps,
+                            args=get_checkpoint_save_args(
+                                self,
+                                envs,
+                                global_step,
+                                episodes_ended,
+                                run_timestamp,
+                            ),
+                            metrics={
+                                k.removeprefix("charts/"): v
+                                for k, v in eval_metrics.items()
+                            },
+                        )
 
         return self

@@ -390,7 +390,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             new_values: Float[Array, "batch_size 1"]
             new_values = self.vf.apply_fn(params, data.observations)
             chex.assert_equal_shape(new_values, data.returns)
-            assert data.values is None and data.returns is not None
+            assert data.values is not None and data.returns is not None
 
             if self.clip_vf_loss:
                 vf_loss_unclipped = (new_values - data.returns) ** 2

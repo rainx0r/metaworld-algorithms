@@ -396,7 +396,7 @@ def compute_gae(
     num_rollout_steps = rollouts.observations.shape[0]
     for timestep in reversed(range(num_rollout_steps)):
         if timestep == num_rollout_steps - 1:
-            next_nonterminal = 1.0 - rollouts.dones
+            next_nonterminal = 1.0 - dones
             next_values = last_values
         else:
             next_nonterminal = 1.0 - rollouts.dones[timestep + 1]
@@ -517,6 +517,7 @@ class MultiTaskRolloutBuffer:
     def get(
         self,
         compute_advantages: bool,
+        compute_episode_returns: bool = False,
         last_values: Float[npt.NDArray, " task"] | None = None,
         dones: Float[npt.NDArray, " task"] | None = None,
         gamma: float = 0.99,
@@ -543,8 +544,10 @@ class MultiTaskRolloutBuffer:
                 self.values == np.zeros_like(self.values)
             ), "Values must have been pushed to the buffer if compute_advantages=True."
             rollouts = compute_gae(rollouts, gamma, gae_lambda, last_values, dones)
-            rollouts = rollouts._replace(
-                episode_returns=rollouts.rewards.mean(axis=1).sum(axis=0).mean()
-            )
+
+            if compute_episode_returns:
+                rollouts = rollouts._replace(
+                    episode_returns=rollouts.rewards.mean(axis=1).sum(axis=0).mean()
+                )
 
         return rollouts

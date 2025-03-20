@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict
 import numpy as np
 import orbax.checkpoint as ocp
 
-from metaworld_algorithms.rl.buffers import AbstractReplayBuffer, MultiTaskReplayBuffer
+from metaworld_algorithms.rl.buffers import AbstractReplayBuffer
 from metaworld_algorithms.types import (
     CheckpointMetadata,
     EnvCheckpoint,
@@ -84,7 +84,7 @@ def get_checkpoint_save_args(
 
 
 def get_checkpoint_restore_args(
-    agent: "Algorithm", buffer: MultiTaskReplayBuffer | None = None
+    agent: "Algorithm", buffer: AbstractReplayBuffer | None = None
 ) -> ocp.args.CheckpointArgs:
     if buffer is not None:
         rb_ckpt = buffer.checkpoint()
