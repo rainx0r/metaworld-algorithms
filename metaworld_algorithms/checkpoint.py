@@ -65,22 +65,24 @@ def get_checkpoint_save_args(
         )
     else:
         buffer_args = None
-    return ocp.args.Composite(
-        agent=ocp.args.PyTreeSave(agent),
-        buffer=buffer_args,
-        env_states=ocp.args.JsonSave(checkpoint_envs(envs)),
-        rngs=ocp.args.Composite(
+    args = {
+        "agent": ocp.args.PyTreeSave(agent),
+        "env_states": ocp.args.JsonSave(checkpoint_envs(envs)),
+        "rngs": ocp.args.Composite(
             python_rng_state=ocp.args.PyTreeSave(random.getstate()),
             global_numpy_rng_state=ocp.args.NumpyRandomKeySave(np.random.get_state()),
         ),
-        metadata=ocp.args.JsonSave(
+        "metadata": ocp.args.JsonSave(
             {
                 "step": total_steps,
                 "episodes_ended": episodes_ended,
                 "timestamp": run_timestamp,
             }
         ),
-    )
+    }
+    if buffer_args is not None:
+        args["buffer"] = buffer_args
+    return ocp.args.Composite(**args)
 
 
 def get_checkpoint_restore_args(
@@ -95,16 +97,19 @@ def get_checkpoint_restore_args(
     else:
         buffer_args = None
 
-    return ocp.args.Composite(
-        agent=ocp.args.PyTreeRestore(agent),
-        buffer=buffer_args,
-        env_states=ocp.args.JsonRestore(),
-        rngs=ocp.args.Composite(
+    args = {
+        "agent": ocp.args.PyTreeRestore(agent),
+        "env_states": ocp.args.JsonRestore(),
+        "rngs": ocp.args.Composite(
             python_rng_state=ocp.args.PyTreeRestore(random.getstate()),
             global_numpy_rng_state=ocp.args.NumpyRandomKeyRestore(),
         ),
-        metadata=ocp.args.JsonRestore(),
-    )
+        "metadata": ocp.args.JsonRestore(),
+    }
+
+    if buffer_args is not None:
+        args["buffer"] = buffer_args
+    return ocp.args.Composite(**args)
 
 
 def get_metadata_only_restore_args() -> ocp.args.CheckpointArgs:

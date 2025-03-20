@@ -418,7 +418,7 @@ class OffPolicyAlgorithm(
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
-                        env_config.evaluate(envs, self)
+                        env_config.evaluate(envs, self)[:3]
                     )
                     eval_metrics = {
                         "charts/mean_success_rate": float(mean_success_rate),
@@ -504,6 +504,7 @@ class OnPolicyAlgorithm(
 
         obs, _ = envs.reset()
 
+        has_autoreset = np.full((envs.num_envs,), False)
         start_step, episodes_ended = 0, 0
 
         if checkpoint_metadata is not None:
@@ -522,17 +523,25 @@ class OnPolicyAlgorithm(
             )
 
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+
+            if not has_autoreset.any():
+                rollout_buffer.add(
+                    obs,
+                    actions,
+                    rewards,
+                    has_autoreset.astype(np.float32),
+                    values,
+                    log_probs,
+                    means,
+                    stds,
+                )
+            elif has_autoreset.any() and not has_autoreset.all():
+                # TODO: handle the case where only some envs have autoreset
+                raise NotImplementedError(
+                    "Only some envs resetting isn't implemented at the moment."
+                )
+
             has_autoreset = np.logical_or(terminations, truncations)
-            rollout_buffer.add(
-                obs,
-                actions,
-                rewards,
-                has_autoreset.astype(np.float32),
-                values,
-                log_probs,
-                means,
-                stds,
-            )
 
             for i, env_ended in enumerate(has_autoreset):
                 if env_ended:
@@ -626,7 +635,7 @@ class OnPolicyAlgorithm(
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
-                        env_config.evaluate(envs, self)
+                        env_config.evaluate(envs, self)[:3]
                     )
                     eval_metrics = {
                         "charts/mean_success_rate": float(mean_success_rate),
