@@ -22,7 +22,7 @@ class AlgorithmConfig:
 class TrainingConfig:
     total_steps: int
     evaluation_frequency: int = 200_000 // 500
-
+    """Evaluation frequency in total environment episodes."""
 
 @dataclass(frozen=True)
 class OffPolicyTrainingConfig(TrainingConfig):
@@ -47,6 +47,9 @@ class MetaLearningTrainingConfig(TrainingConfig):
     meta_batch_size: int = 20
     rollouts_per_task: int = 10
     evaluate_on_train: bool = False
+
+    evaluation_frequency: int = 1_000_000
+    """Evaluation frequency in total environment timesteps."""
 
     compute_advantages: bool = True
     gae_lambda: float = 0.97

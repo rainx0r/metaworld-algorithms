@@ -223,9 +223,9 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
         seed: int | None = None,
         max_steps: int = 500,
     ) -> None:
-        assert (
-            total_capacity % num_tasks == 0
-        ), "Total capacity must be divisible by the number of tasks."
+        assert total_capacity % num_tasks == 0, (
+            "Total capacity must be divisible by the number of tasks."
+        )
         self.capacity = total_capacity // num_tasks
         self.num_tasks = num_tasks
         self._rng = np.random.default_rng(seed)
@@ -350,9 +350,9 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
         Returns:
             ReplayBufferSamples: A batch of samples of batch shape (batch_size,).
         """
-        assert (
-            batch_size % self.num_tasks == 0
-        ), "Batch size must be divisible by the number of tasks."
+        assert batch_size % self.num_tasks == 0, (
+            "Batch size must be divisible by the number of tasks."
+        )
         single_task_batch_size = batch_size // self.num_tasks
 
         sample_idx = self._rng.integers(
@@ -412,10 +412,25 @@ def compute_gae(
 
     returns = advantages + rollouts.values
 
-    return rollouts._replace(
-        returns=returns,
-        advantages=advantages,
-    )
+    if not hasattr(rollouts, "returns"):
+        # NOTE: Can't use `replace` here if this is a Rollout from MetaWorld's evaluation interface
+        return Rollout(
+            returns=returns,
+            advantages=advantages,
+            observations=rollouts.observations,
+            actions=rollouts.actions,
+            rewards=rollouts.rewards,
+            dones=rollouts.dones,
+            log_probs=rollouts.log_probs,
+            means=rollouts.means,
+            stds=rollouts.stds,
+            values=rollouts.values,
+        )
+    else:
+        return rollouts._replace(
+            returns=returns,
+            advantages=advantages,
+        )
 
 
 class MultiTaskRolloutBuffer:
@@ -518,7 +533,6 @@ class MultiTaskRolloutBuffer:
     def get(
         self,
         compute_advantages: bool,
-        compute_episode_returns: bool = False,
         last_values: Float[npt.NDArray, " task"] | None = None,
         dones: Float[npt.NDArray, " task"] | None = None,
         gamma: float = 0.99,
@@ -535,20 +549,15 @@ class MultiTaskRolloutBuffer:
             self.values,
         )
         if compute_advantages:
-            assert (
-                last_values is not None
-            ), "Must provide final value estimates if compute_advantages=True."
-            assert (
-                dones is not None
-            ), "Must provide final value estimates if compute_advantages=True."
-            assert not np.all(
-                self.values == np.zeros_like(self.values)
-            ), "Values must have been pushed to the buffer if compute_advantages=True."
+            assert last_values is not None, (
+                "Must provide final value estimates if compute_advantages=True."
+            )
+            assert dones is not None, (
+                "Must provide final value estimates if compute_advantages=True."
+            )
+            assert not np.all(self.values == np.zeros_like(self.values)), (
+                "Values must have been pushed to the buffer if compute_advantages=True."
+            )
             rollouts = compute_gae(rollouts, gamma, gae_lambda, last_values, dones)
-
-            if compute_episode_returns:
-                rollouts = rollouts._replace(
-                    episode_returns=rollouts.rewards.mean(axis=1).sum(axis=0).mean()
-                )
 
         return rollouts

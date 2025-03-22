@@ -168,6 +168,8 @@ class GradientBasedMetaLearningAlgorithm(
         checkpoint_metadata: CheckpointMetadata | None = None,
         buffer_checkpoint: ReplayBufferCheckpoint | None = None,
     ) -> Self:
+        global_episodic_return: Deque[float] = deque([], maxlen=20 * self.num_tasks)
+        global_episodic_length: Deque[int] = deque([], maxlen=20 * self.num_tasks)
         start_step, episodes_ended = 0, 0
 
         if checkpoint_metadata is not None:
@@ -189,9 +191,9 @@ class GradientBasedMetaLearningAlgorithm(
             config.meta_batch_size
             * config.rollouts_per_task
             * env_config.max_episode_steps
+            * (config.num_inner_gradient_steps + 1)
         )
 
-        truncated = np.full((envs.num_envs,), False)
         for _iter in range(
             start_step, config.total_steps // steps_per_iter
         ):  # Outer step
@@ -204,26 +206,52 @@ class GradientBasedMetaLearningAlgorithm(
             # Collect num_inner_gradient_steps D datasets + collect 1 D' dataset
             for _step in range(config.num_inner_gradient_steps + 1):
                 print(f"- Collecting inner step {_step}")
+                has_autoreset = np.full((envs.num_envs,), False)
+                obs, _ = envs.reset()
+
                 while not rollout_buffer.ready:
                     self, actions, log_probs, means, stds, values = (
                         self.sample_action_dist_and_value(obs)
                     )
 
-                    next_obs, reward, _, truncated, _ = envs.step(actions)
-                    rollout_buffer.add(
-                        obs, actions, reward, truncated, values, log_probs, means, stds
+                    next_obs, rewards, terminations, truncations, infos = envs.step(
+                        actions
                     )
+
+                    if not has_autoreset.any():
+                        rollout_buffer.add(
+                            obs,
+                            actions,
+                            rewards,
+                            np.logical_or(terminations, truncations).astype(np.float32),
+                            values,
+                            log_probs,
+                            means,
+                            stds,
+                        )
+                    elif has_autoreset.any() and not has_autoreset.all():
+                        # TODO: handle the case where only some envs have autoreset
+                        raise NotImplementedError(
+                            "Only some envs resetting isn't implemented at the moment."
+                        )
+
+                    has_autoreset = np.logical_or(terminations, truncations)
+
+                    for i, env_ended in enumerate(has_autoreset):
+                        if env_ended:
+                            global_episodic_return.append(infos["episode"]["r"][i])
+                            global_episodic_length.append(infos["episode"]["l"][i])
+
                     obs = next_obs
 
                 self, _, _, _, _, last_values = self.sample_action_dist_and_value(obs)
 
                 rollouts = rollout_buffer.get(
                     compute_advantages=True,
-                    compute_episode_returns=True,
                     gamma=self.gamma,
                     gae_lambda=config.gae_lambda,
                     last_values=last_values,
-                    dones=truncated,
+                    dones=has_autoreset.astype(np.float32),
                     # TODO: maybe we should bring LinearFeatureBaseline / advantage norm back?
                     # fit_baseline=config.fit_baseline,
                     # normalize_advantages=True,
@@ -237,8 +265,7 @@ class GradientBasedMetaLearningAlgorithm(
                     print(f"- Adaptation step {_step}")
                     self = self.adapt(rollouts)
 
-            assert all_rollouts[-1].episode_returns is not None
-            mean_episodic_return = all_rollouts[-1].episode_returns
+            mean_episodic_return = np.mean(list(global_episodic_return))
             print("- Mean episodic return: ", mean_episodic_return)
             if track:
                 wandb.log(
@@ -253,22 +280,22 @@ class GradientBasedMetaLearningAlgorithm(
             # Evaluation
             if global_step % config.evaluation_frequency == 0 and global_step > 0:
                 print("- Evaluating on the test set...")
-                eval_success_rate, eval_mean_return, eval_success_rate_per_task = (
+                mean_success_rate, mean_returns, mean_success_per_task = (
                     env_config.evaluate_metalearning(eval_envs, self.wrap())
                 )
 
-                logs["charts/mean_success_rate"] = float(eval_success_rate)
-                logs["charts/mean_evaluation_return"] = float(eval_mean_return)
-                for task_name, success_rate in eval_success_rate_per_task.items():
-                    logs[f"charts/{task_name}_success_rate"] = float(success_rate)
+                eval_metrics = {
+                    "charts/mean_success_rate": float(mean_success_rate),
+                    "charts/mean_evaluation_return": float(mean_returns),
+                } | {
+                    f"charts/{task_name}_success_rate": float(success_rate)
+                    for task_name, success_rate in mean_success_per_task.items()
+                }
 
                 if config.evaluate_on_train:
                     print("- Evaluating on the train set...")
-                    # num_evals = (
-                    #     len(benchmark.train_classes) * config.num_evaluation_goals
-                    # ) // config.meta_batch_size
                     _, _, eval_success_rate_per_train_task = (
-                        env_config.evaluate_metalearning(
+                        env_config.evaluate_metalearning_on_train(
                             envs=envs,
                             agent=self.wrap(),
                         )
@@ -277,19 +304,32 @@ class GradientBasedMetaLearningAlgorithm(
                         task_name,
                         success_rate,
                     ) in eval_success_rate_per_train_task.items():
-                        logs[f"charts/{task_name}_train_success_rate"] = float(
+                        eval_metrics[f"charts/{task_name}_train_success_rate"] = float(
                             success_rate
                         )
 
-                    envs.call("toggle_terminate_on_success", False)
+                print(
+                    f"Mean evaluation success rate: {mean_success_rate:.4f}"
+                    + f" return: {mean_returns:.4f}"
+                )
+
+                if track:
+                    wandb.log(eval_metrics, step=global_step)
 
                 if checkpoint_manager is not None:
                     checkpoint_manager.save(
                         global_step,
                         args=get_checkpoint_save_args(
-                            self, envs, global_step, episodes_ended, run_timestamp
+                            self,
+                            envs,
+                            global_step,
+                            episodes_ended,
+                            run_timestamp,
                         ),
-                        metrics={k.removeprefix("charts/"): v for k, v in logs.items()},
+                        metrics={
+                            k.removeprefix("charts/"): v
+                            for k, v in eval_metrics.items()
+                        },
                     )
                     print("- Saved Model")
 
@@ -418,7 +458,7 @@ class OffPolicyAlgorithm(
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
-                        env_config.evaluate(envs, self)[:3]
+                        env_config.evaluate(envs, self)
                     )
                     eval_metrics = {
                         "charts/mean_success_rate": float(mean_success_rate),
@@ -531,7 +571,7 @@ class OnPolicyAlgorithm(
                     obs,
                     actions,
                     rewards,
-                    has_autoreset.astype(np.float32),
+                    np.logical_or(terminations, truncations).astype(np.float32),
                     values,
                     log_probs,
                     means,
@@ -594,7 +634,10 @@ class OnPolicyAlgorithm(
 
                 # Flatten batch dims
                 rollouts = Rollout(
-                    *map(lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None, rollouts)  # pyright: ignore[reportArgumentType]
+                    *map(
+                        lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
+                        rollouts,
+                    )  # pyright: ignore[reportArgumentType]
                 )
 
                 rollout_size = rollouts.observations.shape[0]
@@ -608,16 +651,18 @@ class OnPolicyAlgorithm(
                         end = start + minibatch_size
                         minibatch_rollout = Rollout(
                             *map(
-                                lambda x: x[batch_inds[start:end]] if x is not None else None,  # pyright: ignore[reportArgumentType]
+                                lambda x: x[batch_inds[start:end]]
+                                if x is not None
+                                else None,  # pyright: ignore[reportArgumentType]
                                 rollouts,
                             )
                         )
                         self, logs = self.update(minibatch_rollout)
 
                     if config.target_kl is not None:
-                        assert (
-                            "losses/approx_kl" in logs
-                        ), "Algorithm did not provide approximate KL div, but approx_kl is not None."
+                        assert "losses/approx_kl" in logs, (
+                            "Algorithm did not provide approximate KL div, but approx_kl is not None."
+                        )
                         if logs["losses/approx_kl"] > config.target_kl:
                             print(
                                 f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"
@@ -637,7 +682,7 @@ class OnPolicyAlgorithm(
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
-                        env_config.evaluate(envs, self)[:3]
+                        env_config.evaluate(envs, self)
                     )
                     eval_metrics = {
                         "charts/mean_success_rate": float(mean_success_rate),

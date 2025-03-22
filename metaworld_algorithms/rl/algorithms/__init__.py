@@ -4,6 +4,7 @@ from .base import Algorithm, OffPolicyAlgorithm
 from .mtsac import MTSAC, MTSACConfig
 from .ppo import PPOConfig, PPO
 from .sac import SAC, SACConfig
+from .mamltrpo import MAMLTRPO, MAMLTRPOConfig
 
 
 def get_algorithm_for_config(config: AlgorithmConfig) -> type[Algorithm]:
@@ -13,6 +14,8 @@ def get_algorithm_for_config(config: AlgorithmConfig) -> type[Algorithm]:
         return PPO
     elif type(config) is SACConfig:
         return SAC
+    elif type(config) is MAMLTRPOConfig:
+        return MAMLTRPO
     else:
         raise ValueError(f"Invalid config type: {type(config)}")
 

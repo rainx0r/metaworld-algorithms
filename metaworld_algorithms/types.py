@@ -40,7 +40,6 @@ class Rollout(NamedTuple):
 
     # Computed statistics about observed rewards
     returns: Float[np.ndarray, "task timestep 1"] | None = None
-    episode_returns: Float[np.ndarray, ""] | None = None
     advantages: Float[np.ndarray, "task timestep 1"] | None = None
 
 

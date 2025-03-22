@@ -98,7 +98,7 @@ class MetaworldConfig(EnvConfig):
     def evaluate(
         self, envs: GymVectorEnv, agent: Agent
     ) -> tuple[float, float, dict[str, float]]:
-        return evaluation(agent, envs, num_episodes=self.evaluation_num_episodes)
+        return evaluation(agent, envs, num_episodes=self.evaluation_num_episodes)[:3]
 
     @override
     def spawn(self, seed: int = 1) -> GymVectorEnv:
@@ -143,6 +143,31 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             raise NotImplementedError(f"Unknown env_id: {self.env_id}")
 
         num_evals = (num_classes * self.total_goals_per_task_test) // self.meta_batch_size
+
+        return metalearning_evaluation(
+            agent,  # pyright: ignore[reportArgumentType]
+            envs,
+            num_episodes=self.evaluation_num_episodes,
+            max_episode_steps=self.max_episode_steps,
+            adaptation_steps=self.evaluation_adaptation_steps,
+            adaptation_episodes=self.evaluation_adaptation_episodes,
+            num_evals=num_evals,
+        )
+
+    @override
+    def evaluate_metalearning_on_train(
+        self, envs: GymVectorEnv, agent: MetaLearningAgent
+    ) -> tuple[float, float, dict[str, float]]:
+        if self.env_id == "ML10":
+            num_classes = 10
+        elif  self.env_id == "ML45":
+            num_classes = 45
+        elif self.env_id.startswith("ML1-"):
+            num_classes = 1
+        else:
+            raise NotImplementedError(f"Unknown env_id: {self.env_id}")
+
+        num_evals = (num_classes * self.total_goals_per_task_train) // self.meta_batch_size
 
         return metalearning_evaluation(
             agent,  # pyright: ignore[reportArgumentType]

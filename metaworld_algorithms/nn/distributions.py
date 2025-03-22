@@ -30,6 +30,21 @@ class TanhMultivariateNormalDiag(distrax.Transformed):
         return self.distribution.entropy()  # pyright: ignore [reportReturnType]
 
     @override
+    def kl_divergence(self, other_dist, **kwargs) -> chex.Array:
+        if isinstance(other_dist, TanhMultivariateNormalDiag):
+            # TODO: use pre-tanh distributions for kl divergence
+            # not entirely sure if this is mathematically accurate
+            return self.distribution.kl_divergence(other_dist.distribution, **kwargs)
+        else:
+            return super().kl_divergence(other_dist, **kwargs)
+
+    def pre_tanh_mean(self) -> jax.Array:
+        return self.distribution.loc  # pyright: ignore [reportReturnType]
+
+    def pre_tanh_std(self) -> jax.Array:
+        return self.distribution.scale_diag  # pyright: ignore [reportReturnType]
+
+    @override
     def stddev(self) -> jax.Array:
         return self.bijector.forward(self.distribution.stddev())  # pyright: ignore [reportReturnType]
 

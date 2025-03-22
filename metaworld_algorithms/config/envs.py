@@ -41,3 +41,8 @@ class MetaLearningEnvConfig(EnvConfig):
     def evaluate_metalearning(
         self, envs: GymVectorEnv, agent: MetaLearningAgent
     ) -> tuple[float, float, dict[str, float]]: ...
+
+    @abc.abstractmethod
+    def evaluate_metalearning_on_train(
+        self, envs: GymVectorEnv, agent: MetaLearningAgent
+    ) -> tuple[float, float, dict[str, float]]: ...

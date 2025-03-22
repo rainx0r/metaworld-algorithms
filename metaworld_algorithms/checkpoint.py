@@ -65,9 +65,12 @@ def get_checkpoint_save_args(
         )
     else:
         buffer_args = None
+
+    env_checkpoints = checkpoint_envs(envs)
+
     args = {
         "agent": ocp.args.PyTreeSave(agent),
-        "env_states": ocp.args.JsonSave(checkpoint_envs(envs)),
+        "env_states": ocp.args.JsonSave(env_checkpoints),
         "rngs": ocp.args.Composite(
             python_rng_state=ocp.args.PyTreeSave(random.getstate()),
             global_numpy_rng_state=ocp.args.NumpyRandomKeySave(np.random.get_state()),

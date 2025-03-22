@@ -1,3 +1,3 @@
-from .metaworld import MetaworldConfig
+from .metaworld import MetaworldConfig, MetaworldMetaLearningConfig
 
-__all__ = ["MetaworldConfig"]
+__all__ = ["MetaworldConfig", "MetaworldMetaLearningConfig"]
