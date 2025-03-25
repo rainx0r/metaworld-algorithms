@@ -14,6 +14,7 @@ dependencies = [
     "orbax-checkpoint>=0.7.0",
     "tyro>=0.8.11",
     "wandb>=0.18.5",
+    "scipy>=1.15.2",
 ]
 
 [project.optional-dependencies]

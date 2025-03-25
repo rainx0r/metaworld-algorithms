@@ -1,5 +1,6 @@
 from typing import Any, Generator, Never
 
+import scipy
 import numpy as np
 import numpy.typing as npt
 import optax
@@ -150,3 +151,91 @@ def compute_gae(
             returns=returns,
             advantages=advantages,
         )
+
+
+def compute_returns(
+    rewards: Float[npt.NDArray, "task rollout timestep 1"], discount: float
+):
+    """Discounted cumulative sum.
+
+    See https://docs.scipy.org/doc/scipy/reference/tutorial/signal.html#difference-equation-filtering
+    """
+    # From garage, modified to work on multi-dimensional arrays, and column reward vectors
+    reshape = rewards.shape[-1] == 1
+    if reshape:
+        rewards = rewards.reshape(rewards.shape[:-1])
+    returns = scipy.signal.lfilter(
+        [1], [1, float(-discount)], rewards[..., ::-1], axis=-1
+    )[..., ::-1]
+    return returns if not reshape else returns.reshape(*returns.shape, 1)
+
+
+class LinearFeatureBaseline:
+    @staticmethod
+    def _extract_features(
+        observations: Float[npt.NDArray, "task rollout timestep obs_dim"], reshape=True
+    ):
+        observations = np.clip(observations, -10, 10)
+        ones = np.ones((*observations.shape[:-1], 1))
+        timestep = ones * (np.arange(observations.shape[-2]).reshape(-1, 1) / 100.0)
+        features = np.concatenate(
+            [observations, observations**2, timestep, timestep**2, timestep**3, ones],
+            axis=-1,
+        )
+        if reshape:
+            features = features.reshape(features.shape[0], -1, features.shape[-1])
+        return features
+
+    @classmethod
+    def _fit_baseline(
+        cls,
+        observations: Float[npt.NDArray, "task rollout timestep obs_dim"],
+        returns: Float[npt.NDArray, "task rollout timestep 1"],
+        reg_coeff: float = 1e-5,
+    ) -> np.ndarray:
+        features = cls._extract_features(observations)
+        target = returns.reshape(returns.shape[0], -1, 1)
+
+        coeffs = []
+        task_coeffs = np.zeros(features.shape[1])
+        for task in range(observations.shape[0]):
+            featmat = features[task]
+            _target = target[task]
+            for _ in range(5):
+                task_coeffs = np.linalg.lstsq(
+                    featmat.T @ featmat + reg_coeff * np.identity(featmat.shape[1]),
+                    featmat.T @ _target,
+                    rcond=-1,
+                )[0]
+                if not np.any(np.isnan(task_coeffs)):
+                    break
+                reg_coeff *= 10
+
+            coeffs.append(np.expand_dims(task_coeffs, axis=0))
+
+        return np.stack(coeffs)
+
+    @classmethod
+    def get_baseline_values(
+        cls, rollouts: Rollout, discount: float
+    ) -> Float[npt.NDArray, "timestep task 1"]:
+        assert rollouts.returns is not None
+
+        observations = [[] for _ in range(rollouts.dones.shape[1])]
+        rewards = [[] for _ in range(rollouts.dones.shape[1])]
+        start_idx = np.zeros(rollouts.dones.shape[1], dtype=np.int32)
+        for i in range(rollouts.dones.shape[0]):
+            for done in rollouts.dones[i]:
+                if done:
+                    observations[i].append(rollouts.observations[start_idx[i] : i + 1])
+                    rewards[i].append(rollouts.rewards[start_idx[i] : i + 1])
+                    start_idx[i] = i + 1
+
+        # NOTE: This will error if the trajectories are not the same length
+        observations = np.stack(observations)
+        rewards = np.stack(rewards)
+        returns = compute_returns(rewards, discount=discount)
+
+        coeffs = cls._fit_baseline(observations, returns)
+        features = cls._extract_features(observations, reshape=False)
+        return (features @ coeffs).swapaxes(0, 1).reshape(*rollouts.rewards.shape)
