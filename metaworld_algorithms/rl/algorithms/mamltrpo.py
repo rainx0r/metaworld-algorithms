@@ -2,7 +2,6 @@ import dataclasses
 from functools import partial
 from typing import Self, override
 
-import chex
 import distrax
 import gymnasium as gym
 import jax
@@ -21,24 +20,23 @@ from metaworld_algorithms.config.networks import (
     ValueFunctionConfig,
 )
 from metaworld_algorithms.config.rl import AlgorithmConfig
+from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.rl.algorithms.utils import MetaTrainState, TrainState
 from metaworld_algorithms.rl.networks import (
     EnsembleMDContinuousActionPolicy,
     ValueFunction,
 )
-from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.types import (
     Action,
+    AuxPolicyOutputs,
     LogDict,
-    LogProb,
     MetaLearningAgent,
     Observation,
     Rollout,
-    Value,
 )
-from metaworld_algorithms.rl.buffers import compute_gae
 
 from .base import GradientBasedMetaLearningAlgorithm
+from .utils import compute_gae
 
 
 @jax.jit
@@ -214,15 +212,19 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         }
 
     @override
-    def sample_action_dist_and_value(
+    def sample_action_and_aux(
         self, observation: Observation
-    ) -> tuple[Self, Action, LogProb, Action, Action, Value]:
+    ) -> tuple[Self, Action, AuxPolicyOutputs]:
         rets = _sample_action_dist_and_value(
             self.policy.inner_train_state, self.value_function, observation, self.key
         )
         action, log_prob, mean, std, value = jax.device_get(rets[:-1])
         key = jax.device_get(rets[-1])
-        return self.replace(key=key), action, log_prob, mean, std, value
+        return (
+            self.replace(key=key),
+            action,
+            {"log_prob": log_prob, "mean": mean, "std": std, "value": value},
+        )
 
     @override
     def sample_action(self, observation: Observation) -> tuple[Self, Action]:
@@ -237,12 +239,6 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
 
     @override
     def adapt(self, rollouts: Rollout) -> Self:
-        rollouts = Rollout(
-            *map(
-                lambda x: x.swapaxes(0, 1) if x is not None else None,
-                rollouts,
-            )  # pyright: ignore[reportArgumentType]
-        )
         policy = self.policy.replace(
             inner_train_state=self.inner_step(self.policy.inner_train_state, rollouts)
         )
@@ -255,15 +251,10 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         def adapt_action(
             self, observations: npt.NDArray[np.float64]
         ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]:
-            self.agent, action, log_prob, mean, std, value = (
-                self.agent.sample_action_dist_and_value(observations)
+            self.agent, action, aux_policy_outs = self.agent.sample_action_and_aux(
+                observations
             )
-            return action, {
-                "log_prob": log_prob,
-                "mean": mean,
-                "std": std,
-                "value": value,
-            }
+            return action, aux_policy_outs
 
         def adapt(self, rollouts: Rollout) -> None:
             # HACK: assume the final states are terminal
@@ -343,7 +334,11 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             )
             return targets.kl_divergence(new_param_dist).mean()
 
-        target_dist_cls = TanhMultivariateNormalDiag if self.policy_squash_tanh else distrax.MultivariateNormalDiag
+        target_dist_cls = (
+            TanhMultivariateNormalDiag
+            if self.policy_squash_tanh
+            else distrax.MultivariateNormalDiag
+        )
         target_dist = target_dist_cls(
             loc=all_rollouts[-1].means,  # pyright: ignore[reportArgumentType]
             scale_diag=all_rollouts[-1].stds,  # pyright: ignore[reportArgumentType]
@@ -418,40 +413,40 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             "losses/backtrack_steps": step,
         }
 
-    @jax.jit
-    def update_value_function(self, data: Rollout) -> tuple[Self, LogDict]:
-        def value_function_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
-            new_values: Float[Array, "*batch 1"]
-            new_values = self.value_function.apply_fn(params, data.observations)
-            chex.assert_equal_shape((new_values, data.returns))
-            assert data.values is not None and data.returns is not None
-
-            if self.clip_vf_loss:
-                vf_loss_unclipped = (new_values - data.returns) ** 2
-                v_clipped = data.values + jnp.clip(
-                    new_values - data.values, -self.clip_eps, self.clip_eps
-                )
-                vf_loss_clipped = (v_clipped - data.returns) ** 2
-                vf_loss = 0.5 * jnp.maximum(vf_loss_unclipped, vf_loss_clipped).mean()
-            else:
-                vf_loss = 0.5 * ((new_values - data.returns) ** 2).mean()
-
-            return self.vf_coefficient * vf_loss, {
-                "losses/value_function": vf_loss,
-                "losses/values": new_values.mean(),
-            }
-
-        (_, logs), vf_grads = jax.value_and_grad(value_function_loss, has_aux=True)(
-            self.value_function.params
-        )
-        vf_grads_flat, _ = jax.flatten_util.ravel_pytree(vf_grads)
-        value_function = self.value_function.apply_gradients(grads=vf_grads)
-        vf_params_flat, _ = jax.flatten_util.ravel_pytree(value_function.params)
-
-        return self.replace(value_function=value_function), logs | {
-            "metrics/vf_grad_magnitude": jnp.linalg.norm(vf_grads_flat),
-            "metrics/vf_param_norm": jnp.linalg.norm(vf_params_flat),
-        }
+    # @jax.jit
+    # def update_value_function(self, data: Rollout) -> tuple[Self, LogDict]:
+    #     def value_function_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
+    #         new_values: Float[Array, "*batch 1"]
+    #         new_values = self.value_function.apply_fn(params, data.observations)
+    #         chex.assert_equal_shape((new_values, data.returns))
+    #         assert data.values is not None and data.returns is not None
+    #
+    #         if self.clip_vf_loss:
+    #             vf_loss_unclipped = (new_values - data.returns) ** 2
+    #             v_clipped = data.values + jnp.clip(
+    #                 new_values - data.values, -self.clip_eps, self.clip_eps
+    #             )
+    #             vf_loss_clipped = (v_clipped - data.returns) ** 2
+    #             vf_loss = 0.5 * jnp.maximum(vf_loss_unclipped, vf_loss_clipped).mean()
+    #         else:
+    #             vf_loss = 0.5 * ((new_values - data.returns) ** 2).mean()
+    #
+    #         return self.vf_coefficient * vf_loss, {
+    #             "losses/value_function": vf_loss,
+    #             "losses/values": new_values.mean(),
+    #         }
+    #
+    #     (_, logs), vf_grads = jax.value_and_grad(value_function_loss, has_aux=True)(
+    #         self.value_function.params
+    #     )
+    #     vf_grads_flat, _ = jax.flatten_util.ravel_pytree(vf_grads)
+    #     value_function = self.value_function.apply_gradients(grads=vf_grads)
+    #     vf_params_flat, _ = jax.flatten_util.ravel_pytree(value_function.params)
+    #
+    #     return self.replace(value_function=value_function), logs | {
+    #         "metrics/vf_grad_magnitude": jnp.linalg.norm(vf_grads_flat),
+    #         "metrics/vf_param_norm": jnp.linalg.norm(vf_params_flat),
+    #     }
 
     @override
     def update(self: Self, data: list[Rollout]) -> tuple[Self, LogDict]:
@@ -467,29 +462,29 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         ]
         self, policy_logs = self.outer_step(data)
 
-        # Flatten rollout into a big rollout
-        rollouts: Rollout = jax.tree.map(lambda *xs: np.stack(xs, axis=0), *data)
-        rollouts = Rollout(
-            *map(
-                lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
-                rollouts,
-            )  # pyright: ignore[reportArgumentType]
-        )
-        rollout_size = rollouts.observations.shape[0]
-        minibatch_size = rollout_size // self.vf_num_gradient_steps
+        # # Flatten rollout into a big rollout
+        # rollouts: Rollout = jax.tree.map(lambda *xs: np.stack(xs, axis=0), *data)
+        # rollouts = Rollout(
+        #     *map(
+        #         lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
+        #         rollouts,
+        #     )  # pyright: ignore[reportArgumentType]
+        # )
+        # rollout_size = rollouts.observations.shape[0]
+        # minibatch_size = rollout_size // self.vf_num_gradient_steps
 
-        vf_logs = {}
-        batch_inds = np.arange(rollout_size)
-        for epoch in range(self.vf_num_epochs):
-            np.random.shuffle(batch_inds)
-            for start in range(0, rollout_size, minibatch_size):
-                end = start + minibatch_size
-                minibatch_rollout = Rollout(
-                    *map(
-                        lambda x: x[batch_inds[start:end]] if x is not None else None,  # pyright: ignore[reportArgumentType]
-                        rollouts,
-                    )
-                )
-                self, vf_logs = self.update_value_function(minibatch_rollout)
+        # vf_logs = {}
+        # batch_inds = np.arange(rollout_size)
+        # for epoch in range(self.vf_num_epochs):
+        #     np.random.shuffle(batch_inds)
+        #     for start in range(0, rollout_size, minibatch_size):
+        #         end = start + minibatch_size
+        #         minibatch_rollout = Rollout(
+        #             *map(
+        #                 lambda x: x[batch_inds[start:end]] if x is not None else None,  # pyright: ignore[reportArgumentType]
+        #                 rollouts,
+        #             )
+        #         )
+        # self, vf_logs = self.update_value_function(minibatch_rollout)
 
-        return self, policy_logs | vf_logs
+        return self, policy_logs

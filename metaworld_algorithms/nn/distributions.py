@@ -1,7 +1,8 @@
 import distrax
 
-from typing import override
+from typing import Sequence, override
 
+from distrax._src.distributions.distribution import EventT, IntLike, PRNGKey
 import jax
 import jax.numpy as jnp
 import chex
@@ -16,13 +17,30 @@ class TanhMultivariateNormalDiag(distrax.Transformed):
             distribution=distribution, bijector=distrax.Block(distrax.Tanh(), 1)
         )
 
+    def _clip(self, sample: chex.Array) -> chex.Array:
+        # NOTE: Normally, a Tanh-transformed distribution is bounded in (-1,1).
+        # but due to numerical stability issues, it's possible that some samples are
+        # exactly 1.0 or -1.0. Thus, we can clip samples to be always valid, using
+        # the smallest representable float as the epsilon, given by `finfo` for the
+        # current data type.
+        clip_bound = 1.0 - jnp.finfo(sample.dtype).eps
+        return jnp.clip(sample, -clip_bound, clip_bound)
+
     @override
-    def log_prob(self, value: chex.Array) -> chex.Array:
-        # HACK: The value is undefined at -1.0 and 1.0, yet sometimes such a value can arise
-        # from numerical stability issues with < float64 precision.
-        # Simple fix is to just bound the action to just under -1.0 and 1.0
-        value = jnp.clip(value, -1.0 + 1e-7, 1.0 - 1e-7)
-        return super().log_prob(value)
+    def sample(
+        self, *, seed: IntLike | PRNGKey, sample_shape: IntLike | Sequence[IntLike] = ()
+    ) -> chex.Array:
+        sample = super().sample(seed=seed, sample_shape=sample_shape)
+        return self._clip(sample)
+
+    @override
+    def sample_and_log_prob(
+        self, *, seed: IntLike | PRNGKey, sample_shape: IntLike | Sequence[IntLike] = ()
+    ) -> tuple[chex.Array, chex.Array]:
+        sample, log_prob = super().sample_and_log_prob(
+            seed=seed, sample_shape=sample_shape
+        )
+        return self._clip(sample), log_prob
 
     @override
     def entropy(self, input_hint: chex.Array | None = None) -> chex.Array:

@@ -24,6 +24,7 @@ class TrainingConfig:
     evaluation_frequency: int = 200_000 // 500
     """Evaluation frequency in total environment episodes."""
 
+
 @dataclass(frozen=True)
 class OffPolicyTrainingConfig(TrainingConfig):
     warmstart_steps: int = int(4e3)
@@ -34,12 +35,6 @@ class OffPolicyTrainingConfig(TrainingConfig):
 @dataclass(frozen=True)
 class OnPolicyTrainingConfig(TrainingConfig):
     rollout_steps: int = 10_000
-    num_epochs: int = 16
-    num_gradient_steps: int = 32
-
-    compute_advantages: bool = True
-    gae_lambda: float = 0.97
-    target_kl: float | None = None
 
 
 @dataclass(frozen=True)
@@ -50,10 +45,6 @@ class MetaLearningTrainingConfig(TrainingConfig):
 
     evaluation_frequency: int = 1_000_000
     """Evaluation frequency in total environment timesteps."""
-
-    compute_advantages: bool = True
-    gae_lambda: float = 0.97
-    target_kl: float | None = None
 
 
 @dataclass(frozen=True)

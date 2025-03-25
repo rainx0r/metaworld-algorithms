@@ -1,10 +1,10 @@
 import abc
+from typing import override
 
 import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 from jaxtyping import Float
-from typing import override
 
 from metaworld_algorithms.types import (
     Action,
@@ -377,62 +377,6 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
         return ReplayBufferSamples(*batch)
 
 
-def compute_gae(
-    rollouts: Rollout,
-    gamma: float,
-    gae_lambda: float,
-    last_values: Float[npt.NDArray, " task"],
-    dones: Float[npt.NDArray, " task"],
-) -> Rollout:
-    assert rollouts.values is not None
-
-    last_values = last_values.reshape(-1, 1)
-    dones = dones.reshape(-1, 1)
-
-    advantages = np.zeros_like(rollouts.rewards)
-
-    # Adapted from https://github.com/openai/baselines/blob/master/baselines/ppo2/runner.py
-    last_gae_lamda = 0
-    num_rollout_steps = rollouts.observations.shape[0]
-    for timestep in reversed(range(num_rollout_steps)):
-        if timestep == num_rollout_steps - 1:
-            next_nonterminal = 1.0 - dones
-            next_values = last_values
-        else:
-            next_nonterminal = 1.0 - rollouts.dones[timestep + 1]
-            next_values = rollouts.values[timestep + 1]
-        delta = (
-            rollouts.rewards[timestep]
-            + next_nonterminal * gamma * next_values
-            - rollouts.values[timestep]
-        )
-        advantages[timestep] = last_gae_lamda = (
-            delta + next_nonterminal * gamma * gae_lambda * last_gae_lamda
-        )
-
-    returns = advantages + rollouts.values
-
-    if not hasattr(rollouts, "returns"):
-        # NOTE: Can't use `replace` here if this is a Rollout from MetaWorld's evaluation interface
-        return Rollout(
-            returns=returns,
-            advantages=advantages,
-            observations=rollouts.observations,
-            actions=rollouts.actions,
-            rewards=rollouts.rewards,
-            dones=rollouts.dones,
-            log_probs=rollouts.log_probs,
-            means=rollouts.means,
-            stds=rollouts.stds,
-            values=rollouts.values,
-        )
-    else:
-        return rollouts._replace(
-            returns=returns,
-            advantages=advantages,
-        )
-
-
 class MultiTaskRolloutBuffer:
     num_rollout_steps: int
     num_tasks: int
@@ -532,13 +476,8 @@ class MultiTaskRolloutBuffer:
 
     def get(
         self,
-        compute_advantages: bool,
-        last_values: Float[npt.NDArray, " task"] | None = None,
-        dones: Float[npt.NDArray, " task"] | None = None,
-        gamma: float = 0.99,
-        gae_lambda: float = 0.97,
     ) -> Rollout:
-        rollouts = Rollout(
+        return Rollout(
             self.observations,
             self.actions,
             self.rewards,
@@ -548,16 +487,3 @@ class MultiTaskRolloutBuffer:
             self.stds,
             self.values,
         )
-        if compute_advantages:
-            assert last_values is not None, (
-                "Must provide final value estimates if compute_advantages=True."
-            )
-            assert dones is not None, (
-                "Must provide final value estimates if compute_advantages=True."
-            )
-            assert not np.all(self.values == np.zeros_like(self.values)), (
-                "Values must have been pushed to the buffer if compute_advantages=True."
-            )
-            rollouts = compute_gae(rollouts, gamma, gae_lambda, last_values, dones)
-
-        return rollouts

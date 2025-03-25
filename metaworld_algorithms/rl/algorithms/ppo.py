@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Self, override
+import itertools
 
 import chex
 import distrax
@@ -8,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.flatten_util
 import numpy as np
+import numpy.typing as npt
 from flax import struct
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
@@ -19,18 +21,19 @@ from metaworld_algorithms.config.networks import (
     ValueFunctionConfig,
 )
 from metaworld_algorithms.config.rl import AlgorithmConfig
+from metaworld_algorithms.rl.algorithms.utils import to_minibatch_iterator
 from metaworld_algorithms.rl.networks import ContinuousActionPolicy, ValueFunction
 from metaworld_algorithms.types import (
     Action,
-    Intermediates,
+    AuxPolicyOutputs,
     LogDict,
     LogProb,
     Observation,
-    ReplayBufferSamples,
     Rollout,
     Value,
 )
 
+from .utils import compute_gae
 from .base import OnPolicyAlgorithm
 
 
@@ -43,6 +46,11 @@ def _sample_action(
     dist = policy.apply_fn(policy.params, observation)
     action = dist.sample(seed=action_key)
     return action, key
+
+
+@jax.jit
+def _get_value(value_function: TrainState, observation: Observation) -> Value:
+    return value_function.apply_fn(value_function.params, observation)
 
 
 @jax.jit
@@ -61,11 +69,11 @@ def _sample_action_dist_and_value(
     observation: Observation,
     key: PRNGKeyArray,
 ) -> tuple[
-    Float[Array, "... action_dim"],
-    Float[Array, "..."],
-    Float[Array, "... action_dim"],
-    Float[Array, "... action_dim"],
-    Float[Array, "..."],
+    Action,
+    LogProb,
+    Action,
+    Action,
+    Value,
     PRNGKeyArray,
 ]:
     dist: distrax.Distribution
@@ -85,6 +93,10 @@ class PPOConfig(AlgorithmConfig):
     entropy_coefficient: float = 5e-3
     vf_coefficient: float = 0.001
     normalize_advantages: bool = True
+    gae_lambda: float = 0.97
+    num_gradient_steps: int = 32
+    num_epochs: int = 16
+    target_kl: float | None = None
 
 
 class PPO(OnPolicyAlgorithm[PPOConfig]):
@@ -98,15 +110,20 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
     vf_coefficient: float = struct.field(pytree_node=False)
     normalize_advantages: bool = struct.field(pytree_node=False)
 
+    gae_lambda: float = struct.field(pytree_node=False)
+    num_gradient_steps: int = struct.field(pytree_node=False)
+    num_epochs: int = struct.field(pytree_node=False)
+    target_kl: float | None = struct.field(pytree_node=False)
+
     @override
     @staticmethod
     def initialize(config: PPOConfig, env_config: EnvConfig, seed: int = 1) -> "PPO":
-        assert isinstance(
-            env_config.action_space, gym.spaces.Box
-        ), "Non-box spaces currently not supported."
-        assert isinstance(
-            env_config.observation_space, gym.spaces.Box
-        ), "Non-box spaces currently not supported."
+        assert isinstance(env_config.action_space, gym.spaces.Box), (
+            "Non-box spaces currently not supported."
+        )
+        assert isinstance(env_config.observation_space, gym.spaces.Box), (
+            "Non-box spaces currently not supported."
+        )
 
         master_key = jax.random.PRNGKey(seed)
         algorithm_key, actor_init_key, vf_init_key = jax.random.split(master_key, 3)
@@ -123,18 +140,12 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             tx=config.policy_config.network_config.optimizer.spawn(),
         )
 
-        print("Policy Arch:", jax.tree_util.tree_map(jnp.shape, policy.params))
-        print("Policy Params:", sum(x.size for x in jax.tree.leaves(policy.params)))
-
         vf_net = ValueFunction(config.vf_config)
         value_function = TrainState.create(
             apply_fn=vf_net.apply,
             params=vf_net.init(vf_init_key, dummy_obs),
             tx=config.vf_config.network_config.optimizer.spawn(),
         )
-
-        print("Vf Arch:", jax.tree_util.tree_map(jnp.shape, value_function.params))
-        print("Vf Params:", sum(x.size for x in jax.tree.leaves(value_function.params)))
 
         return PPO(
             num_tasks=config.num_tasks,
@@ -147,6 +158,10 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             entropy_coefficient=config.entropy_coefficient,
             vf_coefficient=config.vf_coefficient,
             normalize_advantages=config.normalize_advantages,
+            gae_lambda=config.gae_lambda,
+            num_gradient_steps=config.num_gradient_steps,
+            num_epochs=config.num_epochs,
+            target_kl=config.target_kl,
         )
 
     @override
@@ -166,15 +181,19 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         return self.replace(key=key), jax.device_get(action)
 
     @override
-    def sample_action_dist_and_value(
+    def sample_action_and_aux(
         self, observation: Observation
-    ) -> tuple[Self, Action, LogProb, Action, Action, Value]:
+    ) -> tuple[Self, Action, AuxPolicyOutputs]:
         action, log_prob, mean, std, value, key = _sample_action_dist_and_value(
             self.policy, self.value_function, observation, self.key
         )
+        action, log_prob, mean, std, value = jax.device_get(
+            (action, log_prob, mean, std, value)
+        )
         return (
             self.replace(key=key),
-            *jax.device_get((action, log_prob, mean, std, value)),
+            action,
+            {"log_prob": log_prob, "mean": mean, "std": std, "value": value},
         )
 
     @override
@@ -275,36 +294,38 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         return self, policy_logs | vf_logs
 
     @override
-    def update(self, data: ReplayBufferSamples | Rollout) -> tuple[Self, LogDict]:
-        assert isinstance(
-            data, Rollout
-        ), "MTPPO does not support replay buffer samples."
-        assert (
-            data.log_probs is not None
-        ), "Rollout policy log probs must have been recorded."
-        assert data.advantages is not None, "GAE must be enabled for MTPPO."
-        assert data.returns is not None, "Returns must be computed for MTPPO."
+    def update(
+        self,
+        data: Rollout,
+        dones: Float[npt.NDArray, "task 1"],
+        next_obs: Float[Observation, " task"] | None = None,
+    ) -> tuple[Self, LogDict]:
+        last_values = None
+        if next_obs is not None:
+            last_values = _get_value(self.value_function, next_obs)
+        data = compute_gae(data, self.gamma, self.gae_lambda, last_values, dones)
+
+        key, minibatch_itoerator_key = jax.random.split(self.key)
+        self = self.replace(key=key)
+        seed = int(
+            jax.random.randint(
+                minibatch_itoerator_key, (), minval=0, maxval=jnp.finfo(jnp.int32).max
+            ).item()
+        )
+        minibatch_iterator = to_minibatch_iterator(data, self.num_gradient_steps, seed)
+
+        logs = {}
+        for epoch in range(self.num_epochs):
+            for minibatch_rollout in itertools.islice(
+                minibatch_iterator, self.num_gradient_steps
+            ):
+                self, logs = self._update_inner(minibatch_rollout)
+
+            if self.target_kl is not None:
+                if logs["losses/approx_kl"] > self.target_kl:
+                    print(
+                        f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"
+                    )
+                    break
+
         return self._update_inner(data)
-
-    @jax.jit
-    def _get_intermediates(self, data: Rollout) -> tuple[Intermediates, Intermediates]:
-        batch_size = data.observations.shape[0]
-
-        _, policy_state = self.policy.apply_fn(
-            self.policy.params, data.observations, capture_intermediates=True
-        )
-
-        _, vf_state = self.value_function.apply_fn(
-            self.value_function.params,
-            data.observations,
-            capture_intermediates=True,
-        )
-
-        actor_intermediates = jax.tree.map(
-            lambda x: x.reshape(batch_size, -1), policy_state["intermediates"]
-        )
-        critic_intermediates = jax.tree.map(
-            lambda x: x.reshape(batch_size, -1), vf_state["intermediates"]
-        )
-
-        return actor_intermediates, critic_intermediates

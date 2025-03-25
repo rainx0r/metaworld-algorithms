@@ -27,20 +27,20 @@ class ReplayBufferSamples(NamedTuple):
 
 class Rollout(NamedTuple):
     # Standard timestep data
-    observations: Float[Observation, "task timestep"]
-    actions: Float[Action, "task timestep"]
-    rewards: Float[np.ndarray, "task timestep 1"]
-    dones: Float[np.ndarray, "task timestep 1"]
+    observations: Float[Observation, "timestep task"]
+    actions: Float[Action, "timestep task"]
+    rewards: Float[np.ndarray, "timestep task 1"]
+    dones: Float[np.ndarray, "timestep task 1"]
 
     # Auxiliary policy outputs
-    log_probs: Float[LogProb, "task timestep"] | None = None
-    means: Float[Action, "task timestep"] | None = None
-    stds: Float[Action, "task timestep"] | None = None
-    values: Float[np.ndarray, "task timestep 1"] | None = None
+    log_probs: Float[LogProb, "timestep task"] | None = None
+    means: Float[Action, "timestep task"] | None = None
+    stds: Float[Action, "timestep task"] | None = None
+    values: Float[np.ndarray, "timestep task 1"] | None = None
 
     # Computed statistics about observed rewards
-    returns: Float[np.ndarray, "task timestep 1"] | None = None
-    advantages: Float[np.ndarray, "task timestep 1"] | None = None
+    returns: Float[np.ndarray, "timestep task 1"] | None = None
+    advantages: Float[np.ndarray, "timestep task 1"] | None = None
 
 
 class Agent(Protocol):

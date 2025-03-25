@@ -3,7 +3,9 @@ import time
 from collections import deque
 from typing import Deque, Generic, Self, TypeVar, override
 
+from jaxtyping import Float
 import numpy as np
+import numpy.typing as npt
 import orbax.checkpoint as ocp
 import wandb
 from flax import struct
@@ -25,16 +27,15 @@ from metaworld_algorithms.rl.buffers import (
 from metaworld_algorithms.types import (
     Action,
     Agent,
+    AuxPolicyOutputs,
     CheckpointMetadata,
     GymVectorEnv,
     LogDict,
-    LogProb,
     MetaLearningAgent,
     Observation,
     ReplayBufferCheckpoint,
     ReplayBufferSamples,
     Rollout,
-    Value,
 )
 
 AlgorithmConfigType = TypeVar("AlgorithmConfigType", bound=AlgorithmConfig)
@@ -62,9 +63,6 @@ class Algorithm(
     def initialize(
         config: AlgorithmConfigType, env_config: EnvConfigType, seed: int = 1
     ) -> "Algorithm": ...
-
-    @abc.abstractmethod
-    def update(self, data: DataType) -> tuple[Self, LogDict]: ...
 
     @abc.abstractmethod
     def get_num_params(self) -> dict[str, int]: ...
@@ -106,6 +104,9 @@ class MetaLearningAlgorithm(
     ) -> "MetaLearningAlgorithm": ...
 
     @abc.abstractmethod
+    def update(self, data: list[Rollout]) -> tuple[Self, LogDict]: ...
+
+    @abc.abstractmethod
     def wrap(self) -> MetaLearningAgent: ...
 
     @abc.abstractmethod
@@ -130,9 +131,9 @@ class GradientBasedMetaLearningAlgorithm(
     Generic[AlgorithmConfigType],
 ):
     @abc.abstractmethod
-    def sample_action_dist_and_value(
+    def sample_action_and_aux(
         self, observation: Observation
-    ) -> tuple[Self, Action, LogProb, Action, Action, Value]: ...
+    ) -> tuple[Self, Action, AuxPolicyOutputs]: ...
 
     def spawn_rollout_buffer(
         self,
@@ -210,9 +211,7 @@ class GradientBasedMetaLearningAlgorithm(
                 obs, _ = envs.reset()
 
                 while not rollout_buffer.ready:
-                    self, actions, log_probs, means, stds, values = (
-                        self.sample_action_dist_and_value(obs)
-                    )
+                    self, actions, aux_policy_outs = self.sample_action_and_aux(obs)
 
                     next_obs, rewards, terminations, truncations, infos = envs.step(
                         actions
@@ -224,10 +223,10 @@ class GradientBasedMetaLearningAlgorithm(
                             actions,
                             rewards,
                             np.logical_or(terminations, truncations).astype(np.float32),
-                            values,
-                            log_probs,
-                            means,
-                            stds,
+                            value=aux_policy_outs.get("value"),
+                            log_prob=aux_policy_outs.get("log_prob"),
+                            mean=aux_policy_outs.get("mean"),
+                            std=aux_policy_outs.get("std"),
                         )
                     elif has_autoreset.any() and not has_autoreset.all():
                         # TODO: handle the case where only some envs have autoreset
@@ -244,18 +243,7 @@ class GradientBasedMetaLearningAlgorithm(
 
                     obs = next_obs
 
-                self, _, _, _, _, last_values = self.sample_action_dist_and_value(obs)
-
-                rollouts = rollout_buffer.get(
-                    compute_advantages=True,
-                    gamma=self.gamma,
-                    gae_lambda=config.gae_lambda,
-                    last_values=last_values,
-                    dones=has_autoreset.astype(np.float32),
-                    # TODO: maybe we should bring LinearFeatureBaseline / advantage norm back?
-                    # fit_baseline=config.fit_baseline,
-                    # normalize_advantages=True,
-                )
+                rollouts = rollout_buffer.get()
                 all_rollouts.append(rollouts)
                 rollout_buffer.reset()
 
@@ -357,6 +345,9 @@ class OffPolicyAlgorithm(
     def spawn_replay_buffer(
         self, env_config: EnvConfig, config: OffPolicyTrainingConfig, seed: int = 1
     ) -> AbstractReplayBuffer: ...
+
+    @abc.abstractmethod
+    def update(self, data: ReplayBufferSamples) -> tuple[Self, LogDict]: ...
 
     @override
     def train(
@@ -510,9 +501,17 @@ class OnPolicyAlgorithm(
     Generic[AlgorithmConfigType],
 ):
     @abc.abstractmethod
-    def sample_action_dist_and_value(
+    def sample_action_and_aux(
         self, observation: Observation
-    ) -> tuple[Self, Action, LogProb, Action, Action, Value]: ...
+    ) -> tuple[Self, Action, AuxPolicyOutputs]: ...
+
+    @abc.abstractmethod
+    def update(
+        self,
+        data: Rollout,
+        dones: Float[npt.NDArray, "task 1"],
+        next_obs: Float[Observation, " task"] | None = None,
+    ) -> tuple[Self, LogDict]: ...
 
     def spawn_rollout_buffer(
         self,
@@ -560,9 +559,7 @@ class OnPolicyAlgorithm(
         for global_step in range(start_step, config.total_steps // envs.num_envs):
             total_steps = global_step * envs.num_envs
 
-            self, actions, log_probs, means, stds, values = (
-                self.sample_action_dist_and_value(obs)
-            )
+            self, actions, aux_policy_outs = self.sample_action_and_aux(obs)
 
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
@@ -572,10 +569,10 @@ class OnPolicyAlgorithm(
                     actions,
                     rewards,
                     np.logical_or(terminations, truncations).astype(np.float32),
-                    values,
-                    log_probs,
-                    means,
-                    stds,
+                    value=aux_policy_outs.get("value"),
+                    log_prob=aux_policy_outs.get("log_prob"),
+                    mean=aux_policy_outs.get("mean"),
+                    std=aux_policy_outs.get("std"),
                 )
             elif has_autoreset.any() and not has_autoreset.all():
                 # TODO: handle the case where only some envs have autoreset
@@ -620,54 +617,10 @@ class OnPolicyAlgorithm(
                     wandb.log({"charts/SPS": sps}, step=total_steps)
 
             if rollout_buffer.ready:
-                last_values = None
-                if config.compute_advantages:
-                    self, _, _, _, _, last_values = self.sample_action_dist_and_value(
-                        next_obs
-                    )
-
-                rollouts = rollout_buffer.get(
-                    config.compute_advantages,
-                    last_values=last_values,
-                    dones=has_autoreset.astype(np.float32),
+                rollouts = rollout_buffer.get()
+                self, logs = self.update(
+                    rollouts, dones=has_autoreset.astype(np.float32), next_obs=next_obs
                 )
-
-                # Flatten batch dims
-                rollouts = Rollout(
-                    *map(
-                        lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
-                        rollouts,
-                    )  # pyright: ignore[reportArgumentType]
-                )
-
-                rollout_size = rollouts.observations.shape[0]
-                minibatch_size = rollout_size // config.num_gradient_steps
-
-                logs = {}
-                batch_inds = np.arange(rollout_size)
-                for epoch in range(config.num_epochs):
-                    np.random.shuffle(batch_inds)
-                    for start in range(0, rollout_size, minibatch_size):
-                        end = start + minibatch_size
-                        minibatch_rollout = Rollout(
-                            *map(
-                                lambda x: x[batch_inds[start:end]]
-                                if x is not None
-                                else None,  # pyright: ignore[reportArgumentType]
-                                rollouts,
-                            )
-                        )
-                        self, logs = self.update(minibatch_rollout)
-
-                    if config.target_kl is not None:
-                        assert "losses/approx_kl" in logs, (
-                            "Algorithm did not provide approximate KL div, but approx_kl is not None."
-                        )
-                        if logs["losses/approx_kl"] > config.target_kl:
-                            print(
-                                f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"
-                            )
-                            break
 
                 rollout_buffer.reset()
 
