@@ -35,7 +35,7 @@ from metaworld_algorithms.types import (
 )
 
 from .base import GradientBasedMetaLearningAlgorithm
-from .utils import LinearFeatureBaseline, compute_gae, normalize_advantages
+from .utils import LinearFeatureBaseline, compute_gae, normalize_advantages, swap_rollout_axes
 
 
 @jax.jit
@@ -208,9 +208,8 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
 
     @override
     def adapt(self, rollouts: Rollout) -> Self:
-        rollouts = self.compute_advantages(
-            rollouts,
-        )
+        rollouts = self.compute_advantages(rollouts)
+        rollouts = swap_rollout_axes(rollouts, 0, 1)
         policy = self.policy.replace(
             inner_train_state=self.inner_step(self.policy.inner_train_state, rollouts)
         )
@@ -401,14 +400,6 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
     def update(self: Self, data: list[Rollout]) -> tuple[Self, LogDict]:
         data = [self.compute_advantages(rollouts) for rollouts in data]
         # Update policy (MetaRL outer step)
-        data = [
-            Rollout(
-                *map(
-                    lambda x: x.swapaxes(0, 1) if x is not None else None,
-                    rollouts,
-                )  # pyright: ignore[reportArgumentType]
-            )
-            for rollouts in data
-        ]
+        data = [swap_rollout_axes(rollouts, 0, 1) for rollouts in data]
         self, policy_logs = self.outer_step(data)
         return self, policy_logs

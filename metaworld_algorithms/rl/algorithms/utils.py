@@ -235,17 +235,21 @@ class LinearFeatureBaseline:
     ) -> tuple[
         Float[npt.NDArray, "timestep task 1"], Float[npt.NDArray, "timestep task 1"]
     ]:
+        # Split the rollouts into episodes
+        # TODO: Refactor
         observations = [[] for _ in range(rollouts.dones.shape[1])]
         rewards = [[] for _ in range(rollouts.dones.shape[1])]
         start_idx = np.zeros(rollouts.dones.shape[1], dtype=np.int32)
-        for i in range(rollouts.dones.shape[0]):
-            for j, done in enumerate(rollouts.dones[i]):
-                if done:
-                    observations[j].append(
-                        rollouts.observations[start_idx[j] : i + 1, j]
-                    )
-                    rewards[j].append(rollouts.rewards[start_idx[j] : i + 1, j])
-                    start_idx[j] = i + 1
+        for i in range(rollouts.dones.shape[0] + 1):
+            if i == rollouts.dones.shape[0]:  # Assume final observation is terminal
+                dones = np.ones((rollouts.dones.shape[1], 1))
+            else:
+                dones = rollouts.dones[i]
+            for j, done in enumerate(dones):
+                if done and i != 0:
+                    observations[j].append(rollouts.observations[start_idx[j] : i, j])
+                    rewards[j].append(rollouts.rewards[start_idx[j] : i, j])
+                    start_idx[j] = i
 
         # NOTE: This will error if the trajectories are not the same length
         observations = np.stack(observations)
@@ -263,3 +267,11 @@ class LinearFeatureBaseline:
         features = cls._extract_features(observations, reshape=False)
 
         return _reshape(features @ coeffs), _reshape(returns)
+
+def swap_rollout_axes(rollout: Rollout, axis1: int, axis2: int) -> Rollout:
+    return Rollout(
+        *map(
+            lambda x: x.swapaxes(axis1, axis2) if x is not None else None,
+            rollout,
+        )  # pyright: ignore[reportArgumentType]
+    )

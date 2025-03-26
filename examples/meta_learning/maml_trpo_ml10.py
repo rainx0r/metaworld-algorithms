@@ -10,7 +10,9 @@ from metaworld_algorithms.config.networks import (
 )
 from metaworld_algorithms.config.nn import VanillaNetworkConfig
 from metaworld_algorithms.config.optim import OptimizerConfig
-from metaworld_algorithms.config.rl import GradientBasedMetaLearningTrainingConfig, MetaLearningTrainingConfig
+from metaworld_algorithms.config.rl import (
+    GradientBasedMetaLearningTrainingConfig,
+)
 from metaworld_algorithms.envs import MetaworldMetaLearningConfig
 from metaworld_algorithms.rl.algorithms import MAMLTRPOConfig
 from metaworld_algorithms.run import Run
@@ -53,7 +55,7 @@ def main() -> None:
                     optimizer=OptimizerConfig(max_grad_norm=1.0),
                 )
             ),
-            clip_vf_loss=False,
+            gae_lambda=1.0,
         ),
         training_config=GradientBasedMetaLearningTrainingConfig(
             meta_batch_size=meta_batch_size,
