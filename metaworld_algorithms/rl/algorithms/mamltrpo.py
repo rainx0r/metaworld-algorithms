@@ -35,7 +35,7 @@ from metaworld_algorithms.types import (
 )
 
 from .base import GradientBasedMetaLearningAlgorithm
-from .utils import LinearFeatureBaseline, compute_gae
+from .utils import LinearFeatureBaseline, compute_gae, normalize_advantages
 
 
 @jax.jit
@@ -246,12 +246,16 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         rollouts: Rollout,
     ) -> Rollout:
         # NOTE: assume the final states are terminal
-        dones = np.full(rollouts.rewards.shape[1:], 1.0, dtype=np.float32)
-        returns = LinearFeatureBaseline.get_baseline_values(rollouts, self.gamma)
-        rollouts = rollouts._replace(returns=returns)
-        return compute_gae(
+        dones = np.full(rollouts.rewards.shape[1:], 1.0, dtype=rollouts.rewards.dtype)
+        values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
+            rollouts, self.gamma
+        )
+        rollouts = rollouts._replace(values=values, returns=returns)
+        rollouts = compute_gae(
             rollouts, self.gamma, self.gae_lambda, last_values=None, dones=dones
         )
+        rollouts = normalize_advantages(rollouts)
+        return rollouts
 
     @jax.jit
     def inner_step(self, policy: TrainState, rollouts: Rollout) -> TrainState:

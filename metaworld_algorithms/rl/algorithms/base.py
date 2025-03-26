@@ -207,6 +207,7 @@ class GradientBasedMetaLearningAlgorithm(
             # Collect num_inner_gradient_steps D datasets + collect 1 D' dataset
             for _step in range(config.num_inner_gradient_steps + 1):
                 print(f"- Collecting inner step {_step}")
+                episode_started = np.full((envs.num_envs,), 1.0)
                 has_autoreset = np.full((envs.num_envs,), False)
                 obs, _ = envs.reset()
 
@@ -222,12 +223,14 @@ class GradientBasedMetaLearningAlgorithm(
                             obs,
                             actions,
                             rewards,
-                            np.logical_or(terminations, truncations).astype(np.float32),
+                            episode_started,
                             value=aux_policy_outs.get("value"),
                             log_prob=aux_policy_outs.get("log_prob"),
                             mean=aux_policy_outs.get("mean"),
                             std=aux_policy_outs.get("std"),
                         )
+
+                        episode_started = np.logical_or(terminations, truncations)
                     elif has_autoreset.any() and not has_autoreset.all():
                         # TODO: handle the case where only some envs have autoreset
                         raise NotImplementedError(
@@ -546,6 +549,7 @@ class OnPolicyAlgorithm(
         obs, _ = envs.reset()
 
         has_autoreset = np.full((envs.num_envs,), False)
+        episode_started = np.full((envs.num_envs,), 1.0)
         start_step, episodes_ended = 0, 0
 
         if checkpoint_metadata is not None:
@@ -568,12 +572,14 @@ class OnPolicyAlgorithm(
                     obs,
                     actions,
                     rewards,
-                    np.logical_or(terminations, truncations).astype(np.float32),
+                    episode_started,
                     value=aux_policy_outs.get("value"),
                     log_prob=aux_policy_outs.get("log_prob"),
                     mean=aux_policy_outs.get("mean"),
                     std=aux_policy_outs.get("std"),
                 )
+
+                episode_started = np.logical_or(terminations, truncations)
             elif has_autoreset.any() and not has_autoreset.all():
                 # TODO: handle the case where only some envs have autoreset
                 raise NotImplementedError(
@@ -619,7 +625,7 @@ class OnPolicyAlgorithm(
             if rollout_buffer.ready:
                 rollouts = rollout_buffer.get()
                 self, logs = self.update(
-                    rollouts, dones=has_autoreset.astype(np.float32), next_obs=next_obs
+                    rollouts, dones=terminations, next_obs=next_obs
                 )
 
                 rollout_buffer.reset()

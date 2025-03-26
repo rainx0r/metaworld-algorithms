@@ -96,13 +96,16 @@ def compute_gae(
     last_values: Float[npt.NDArray, " task"] | None,
     dones: Float[npt.NDArray, " task"],
 ) -> Rollout:
+    # NOTE: dones is a very misleading name but it goes back to OpenAI's original PPO code
+    # really, dones indicates whether *the previous timstep* was terminal.
+
     assert rollouts.values is not None
 
     if last_values is not None:
         last_values = last_values.reshape(-1, 1)
     else:
         if np.all(dones == 1.0):
-            last_values = np.zeros_like(rollouts.values)
+            last_values = np.zeros_like(rollouts.values[0])
         else:
             raise ValueError(
                 "Must provide final value estimates if the final timestep is not terminal for all envs."
@@ -112,8 +115,11 @@ def compute_gae(
     advantages = np.zeros_like(rollouts.rewards)
 
     # Adapted from https://github.com/openai/baselines/blob/master/baselines/ppo2/runner.py
+    # Renamed dones -> episode_starts because the former is misleading
     last_gae_lamda = 0
     num_rollout_steps = rollouts.observations.shape[0]
+    assert last_values is not None
+
     for timestep in reversed(range(num_rollout_steps)):
         if timestep == num_rollout_steps - 1:
             next_nonterminal = 1.0 - dones
@@ -155,7 +161,7 @@ def compute_gae(
 
 def compute_returns(
     rewards: Float[npt.NDArray, "task rollout timestep 1"], discount: float
-):
+) -> Float[npt.NDArray, "task rollout timestep 1"]:
     """Discounted cumulative sum.
 
     See https://docs.scipy.org/doc/scipy/reference/tutorial/signal.html#difference-equation-filtering
@@ -168,6 +174,14 @@ def compute_returns(
         [1], [1, float(-discount)], rewards[..., ::-1], axis=-1
     )[..., ::-1]
     return returns if not reshape else returns.reshape(*returns.shape, 1)
+
+
+def normalize_advantages(rollouts: Rollout) -> Rollout:
+    assert rollouts.advantages is not None
+    mean = rollouts.advantages.mean(axis=0, keepdims=True)
+    var = rollouts.advantages.var(axis=0, keepdims=True)
+    advantages = (rollouts.advantages - mean) / (var + 1e-8)
+    return rollouts._replace(advantages=advantages)
 
 
 class LinearFeatureBaseline:
@@ -216,26 +230,36 @@ class LinearFeatureBaseline:
         return np.stack(coeffs)
 
     @classmethod
-    def get_baseline_values(
+    def get_baseline_values_and_returns(
         cls, rollouts: Rollout, discount: float
-    ) -> Float[npt.NDArray, "timestep task 1"]:
-        assert rollouts.returns is not None
-
+    ) -> tuple[
+        Float[npt.NDArray, "timestep task 1"], Float[npt.NDArray, "timestep task 1"]
+    ]:
         observations = [[] for _ in range(rollouts.dones.shape[1])]
         rewards = [[] for _ in range(rollouts.dones.shape[1])]
         start_idx = np.zeros(rollouts.dones.shape[1], dtype=np.int32)
         for i in range(rollouts.dones.shape[0]):
-            for done in rollouts.dones[i]:
+            for j, done in enumerate(rollouts.dones[i]):
                 if done:
-                    observations[i].append(rollouts.observations[start_idx[i] : i + 1])
-                    rewards[i].append(rollouts.rewards[start_idx[i] : i + 1])
-                    start_idx[i] = i + 1
+                    observations[j].append(
+                        rollouts.observations[start_idx[j] : i + 1, j]
+                    )
+                    rewards[j].append(rollouts.rewards[start_idx[j] : i + 1, j])
+                    start_idx[j] = i + 1
 
         # NOTE: This will error if the trajectories are not the same length
         observations = np.stack(observations)
         rewards = np.stack(rewards)
         returns = compute_returns(rewards, discount=discount)
 
+        def _reshape(x: npt.NDArray) -> npt.NDArray:
+            return (
+                x.reshape(x.shape[0], -1, x.shape[-1])
+                .swapaxes(0, 1)
+                .reshape(*rollouts.rewards.shape)
+            )
+
         coeffs = cls._fit_baseline(observations, returns)
         features = cls._extract_features(observations, reshape=False)
-        return (features @ coeffs).swapaxes(0, 1).reshape(*rollouts.rewards.shape)
+
+        return _reshape(features @ coeffs), _reshape(returns)

@@ -204,8 +204,8 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         assert data.advantages is not None
 
         if self.normalize_advantages:
-            advantages = (data.advantages - data.advantages.mean()) / (
-                data.advantages.std() + 1e-8
+            advantages = (data.advantages - data.advantages.mean(axis=0, keepdims=True)) / (
+                data.advantages.std(axis=0, keepdims=True) + 1e-8
             )
         else:
             advantages = data.advantages
@@ -309,7 +309,7 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         self = self.replace(key=key)
         seed = int(
             jax.random.randint(
-                minibatch_itoerator_key, (), minval=0, maxval=jnp.finfo(jnp.int32).max
+                minibatch_itoerator_key, (), minval=0, maxval=jnp.iinfo(jnp.int32).max
             ).item()
         )
         minibatch_iterator = to_minibatch_iterator(data, self.num_gradient_steps, seed)
