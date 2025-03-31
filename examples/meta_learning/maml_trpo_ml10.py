@@ -28,6 +28,7 @@ class Args:
     wandb_entity: str | None = None
     data_dir: Path = Path("./run_results")
     resume: bool = False
+    evaluation_frequency: int = 1_000_000
 
 
 def main() -> None:
@@ -61,7 +62,7 @@ def main() -> None:
             meta_batch_size=meta_batch_size,
             evaluate_on_train=False,
             total_steps=15_000_000,
-            evaluation_frequency=1_000_000,
+            evaluation_frequency=args.evaluation_frequency,
         ),
         checkpoint=True,
         resume=args.resume,

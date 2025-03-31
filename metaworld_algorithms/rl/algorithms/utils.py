@@ -268,6 +268,7 @@ class LinearFeatureBaseline:
 
         return _reshape(features @ coeffs), _reshape(returns)
 
+
 def swap_rollout_axes(rollout: Rollout, axis1: int, axis2: int) -> Rollout:
     return Rollout(
         *map(
@@ -275,3 +276,10 @@ def swap_rollout_axes(rollout: Rollout, axis1: int, axis2: int) -> Rollout:
             rollout,
         )  # pyright: ignore[reportArgumentType]
     )
+
+
+def dones_to_episode_starts(rollout: Rollout) -> Rollout:
+    episode_starts = np.concatenate(
+        (np.ones((1, *rollout.dones.shape[1:])), rollout.dones), axis=0
+    )[:-1]
+    return rollout._replace(dones=episode_starts)

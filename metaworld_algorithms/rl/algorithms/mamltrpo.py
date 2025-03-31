@@ -35,7 +35,13 @@ from metaworld_algorithms.types import (
 )
 
 from .base import GradientBasedMetaLearningAlgorithm
-from .utils import LinearFeatureBaseline, compute_gae, normalize_advantages, swap_rollout_axes
+from .utils import (
+    LinearFeatureBaseline,
+    compute_gae,
+    dones_to_episode_starts,
+    normalize_advantages,
+    swap_rollout_axes,
+)
 
 
 @jax.jit
@@ -228,6 +234,9 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             return action, aux_policy_outs
 
         def adapt(self, rollouts: Rollout) -> None:
+            # MetaWorld's evaluation stores done instead of episode_start
+            # TODO: Maybe just change the interface?
+            rollouts = dones_to_episode_starts(rollouts)
             rollouts = self.agent.compute_advantages(rollouts)
             self.agent = self.agent.adapt(rollouts)
 
@@ -249,6 +258,10 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
             rollouts, self.gamma
         )
+        if not hasattr(rollouts, "returns"):
+            # For Rollout from MetaWorld's evaluation interface
+            # TODO: Maybe just change the interface?
+            rollouts = Rollout(*rollouts)
         rollouts = rollouts._replace(values=values, returns=returns)
         rollouts = compute_gae(
             rollouts, self.gamma, self.gae_lambda, last_values=None, dones=dones
