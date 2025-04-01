@@ -368,6 +368,7 @@ class OffPolicyAlgorithm(
         global_episodic_return: Deque[float] = deque([], maxlen=20 * self.num_tasks)
         global_episodic_length: Deque[int] = deque([], maxlen=20 * self.num_tasks)
 
+        eval_envs = env_config.spawn_eval(seed=seed)
         obs, _ = envs.reset()
 
         has_autoreset = np.full((envs.num_envs,), False)
@@ -452,7 +453,7 @@ class OffPolicyAlgorithm(
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
-                        env_config.evaluate(envs, self)
+                        env_config.evaluate(eval_envs, self)
                     )
                     eval_metrics = {
                         "charts/mean_success_rate": float(mean_success_rate),
@@ -546,6 +547,7 @@ class OnPolicyAlgorithm(
         global_episodic_return: Deque[float] = deque([], maxlen=20 * self.num_tasks)
         global_episodic_length: Deque[int] = deque([], maxlen=20 * self.num_tasks)
 
+        eval_envs = env_config.spawn_eval(seed=seed)
         obs, _ = envs.reset()
 
         has_autoreset = np.full((envs.num_envs,), False)
@@ -641,7 +643,7 @@ class OnPolicyAlgorithm(
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
-                        env_config.evaluate(envs, self)
+                        env_config.evaluate(eval_envs, self)
                     )
                     eval_metrics = {
                         "charts/mean_success_rate": float(mean_success_rate),

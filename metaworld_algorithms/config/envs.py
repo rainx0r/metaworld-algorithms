@@ -27,6 +27,9 @@ class EnvConfig(abc.ABC):
     def spawn(self, seed: int = 1) -> GymVectorEnv: ...
 
     @abc.abstractmethod
+    def spawn_eval(self, seed: int = 1) -> GymVectorEnv: ...
+
+    @abc.abstractmethod
     def evaluate(
         self, envs: GymVectorEnv, agent: Agent
     ) -> tuple[float, float, dict[str, float]]: ...

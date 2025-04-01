@@ -101,6 +101,23 @@ class MetaworldConfig(EnvConfig):
         return evaluation(agent, envs, num_episodes=self.evaluation_num_episodes)[:3]
 
     @override
+    def spawn_eval(self, seed: int = 1) -> GymVectorEnv:
+        envs = gym.make_vec(  # pyright: ignore[reportReturnType]
+            f"Meta-World/{self.env_id}",
+            seed=seed,
+            use_one_hot=self.use_one_hot,
+            terminate_on_success=True,
+            vector_strategy="async",
+            reward_function_version=self.reward_func_version,
+            num_goals=self.num_goals,
+            reward_normalization_method=self.reward_normalization_method,
+            task_select="pseudorandom",
+        )
+        envs.set_attr("sample_tasks_on_reset", True)
+        envs.reset()
+        return envs  # pyright: ignore[reportReturnType]
+
+    @override
     def spawn(self, seed: int = 1) -> GymVectorEnv:
         return gym.make_vec(  # pyright: ignore[reportReturnType]
             f"Meta-World/{self.env_id}",
@@ -142,7 +159,9 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         else:
             raise NotImplementedError(f"Unknown env_id: {self.env_id}")
 
-        num_evals = (num_classes * self.total_goals_per_task_test) // self.meta_batch_size
+        num_evals = (
+            num_classes * self.total_goals_per_task_test
+        ) // self.meta_batch_size
 
         return metalearning_evaluation(
             agent,  # pyright: ignore[reportArgumentType]
@@ -160,14 +179,16 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
     ) -> tuple[float, float, dict[str, float]]:
         if self.env_id == "ML10":
             num_classes = 10
-        elif  self.env_id == "ML45":
+        elif self.env_id == "ML45":
             num_classes = 45
         elif self.env_id.startswith("ML1-"):
             num_classes = 1
         else:
             raise NotImplementedError(f"Unknown env_id: {self.env_id}")
 
-        num_evals = (num_classes * self.total_goals_per_task_train) // self.meta_batch_size
+        num_evals = (
+            num_classes * self.total_goals_per_task_train
+        ) // self.meta_batch_size
 
         return metalearning_evaluation(
             agent,  # pyright: ignore[reportArgumentType]
