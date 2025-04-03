@@ -18,15 +18,14 @@ from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.nn.initializers import uniform
 
 
-class ContinuousActionPolicy(nn.Module):
-    """A Flax module representing the policy network for continous action spaces."""
+class ContinuousActionPolicyTorso(nn.Module):
+    """A Flax module representing the torso of the policy network for continous action spaces."""
 
     action_dim: int
     config: ContinuousActionPolicyConfig
-    last_act = None
 
     @nn.compact
-    def __call__(self, x: jax.Array) -> distrax.Distribution:
+    def __call__(self, x: jax.Array) -> tuple[jax.Array, jax.Array]:
         mlp_head_dim = self.action_dim
         if self.config.std_type == StdType.MLP_HEAD:
             mlp_head_dim *= 2
@@ -61,6 +60,21 @@ class ContinuousActionPolicy(nn.Module):
             log_std, a_min=self.config.log_std_min, a_max=self.config.log_std_max
         )
         std = jnp.exp(log_std)
+
+        return mean, std
+
+
+class ContinuousActionPolicy(nn.Module):
+    """A Flax module representing the policy network for continous action spaces."""
+
+    action_dim: int
+    config: ContinuousActionPolicyConfig
+
+    @nn.compact
+    def __call__(self, x: jax.Array) -> distrax.Distribution:
+        mean, std = ContinuousActionPolicyTorso(
+            action_dim=self.action_dim, config=self.config
+        )(x)
 
         if self.config.squash_tanh:
             return TanhMultivariateNormalDiag(loc=mean, scale_diag=std)
@@ -143,16 +157,13 @@ class EnsembleMDContinuousActionPolicy(nn.Module):
     action_dim: int
     num: int
     config: ContinuousActionPolicyConfig
-    last_act = None
 
     @cached_property
     def _net_cls(self) -> Callable[..., nn.Module]:
         return partial(
-            get_nn_arch_for_config(self.config.network_config),
-            config=self.config.network_config,
-            head_dim=self.action_dim * 2,
-            head_kernel_init=uniform(1e-3),
-            head_bias_init=uniform(1e-3),
+            ContinuousActionPolicyTorso,
+            action_dim=self.action_dim,
+            config=self.config,
         )
 
     @nn.compact
@@ -165,13 +176,7 @@ class EnsembleMDContinuousActionPolicy(nn.Module):
             out_axes=0,
             axis_size=self.num,
         )
-        x = ensemble(name="ensemble")(x)
-
-        mean, log_std = jnp.split(x, 2, axis=-1)
-        log_std = jnp.clip(
-            log_std, a_min=self.config.log_std_min, a_max=self.config.log_std_max
-        )
-        std = jnp.exp(log_std)
+        mean, std = ensemble(name="ensemble")(x)
 
         if self.config.squash_tanh:
             return TanhMultivariateNormalDiag(loc=mean, scale_diag=std)
