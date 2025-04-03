@@ -1,9 +1,16 @@
-import pytest
-import numpy as np
+import os
 from pathlib import Path
+
+import numpy as np
+import pytest
+
 from metaworld_algorithms.rl.buffers import Rollout
 
 DATA_PATH = Path(__file__).parent / "data"
+
+@pytest.fixture(scope="session", autouse=True)
+def set_env():
+    os.environ["XLA_FLAGS"] = "--xla_gpu_deterministic_ops=true"
 
 
 @pytest.fixture
@@ -21,6 +28,10 @@ def metarl_rollouts():
         dones = np.load(f).swapaxes(0, 1)
     with open(ROLLOUTS_PATH / "values.npy", "rb") as f:
         values = np.load(f)
+
+    dones = np.concatenate(
+        [np.ones((1, *dones.shape[1:])), dones[:-1]], axis=0
+    )
 
     actions = np.ones((*observations.shape[:-1], 4), dtype=np.float64)
     return Rollout(

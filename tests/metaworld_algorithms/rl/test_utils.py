@@ -65,12 +65,7 @@ def test_linear_feature_baseline(metarl_rollouts: Rollout):
     assert np.allclose(values, metarl_rollouts.values)
 
     rollouts = metarl_rollouts._replace(values=values, returns=returns)
-    final_dones = rollouts.dones[-1]
-    pre_final_dones = rollouts.dones[:-1]
-    new_dones = np.concatenate(
-        [np.ones((1, *pre_final_dones.shape[1:])), pre_final_dones], axis=0
-    )
-    rollouts = rollouts._replace(dones=new_dones)
+    final_dones = np.ones((1, *rollouts.dones.shape[1:]))
     rollouts_with_advantages = compute_gae(rollouts, 0.99, 0.97, None, final_dones)
     rollouts_with_normalised_advantages = normalize_advantages(rollouts_with_advantages)
     assert rollouts_with_normalised_advantages.advantages is not None

@@ -57,7 +57,7 @@ class ContinuousActionPolicyTorso(nn.Module):
             raise ValueError("Invalid std_type: %s" % self.config.std_type)
 
         log_std = jnp.clip(
-            log_std, a_min=self.config.log_std_min, a_max=self.config.log_std_max
+            log_std, min=self.config.log_std_min, max=self.config.log_std_max
         )
         std = jnp.exp(log_std)
 

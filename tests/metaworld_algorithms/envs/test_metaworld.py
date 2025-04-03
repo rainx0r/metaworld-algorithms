@@ -20,4 +20,4 @@ def test_ml45_test_envs_spawn_deterministic():
                 env_ckpt2[1]["tasks"],
             )
             for task1, task2 in zip(env_ckpt1_tasks, env_ckpt2_tasks):
-                assert task1.data == task2.data
+                assert task1["data"] == task2["data"]

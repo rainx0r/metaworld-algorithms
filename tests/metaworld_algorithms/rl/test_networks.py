@@ -25,7 +25,7 @@ def test_expand_params_and_forward_pass(rng):
     net = partial(MLP, head_dim=4, width=10, depth=3)
     ensemble_md = EnsembleMD(net_cls=net, num=3)
 
-    single_params = net().init(rng, jnp.ones((1, 5)))
+    single_params = net().init(rng, jnp.ones((10, 5)))
     expanded_params = ensemble_md.expand_params(single_params)
 
     assert "params" in expanded_params
@@ -52,7 +52,7 @@ def test_expand_params_and_forward_pass_continuous_action_policy(rng):
         action_dim=4, num=3, config=ContinuousActionPolicyConfig()
     )
 
-    single_params = ensemble_md.init_single(rng, jnp.ones((3, 10, 5)))
+    single_params = ensemble_md.init_single(rng, jnp.ones((10, 5)))
     expanded_params = ensemble_md.expand_params(single_params)
 
     assert "params" in expanded_params
@@ -68,7 +68,7 @@ def test_expand_params_and_forward_pass_continuous_action_policy(rng):
     output_ensemble: TanhMultivariateNormalDiag
     output_ensemble = ensemble_md.apply(expanded_params, data)  # pyright: ignore [reportAssignmentType]
     policy_params = FrozenDict(
-        {"params": {"VanillaNetwork_0": single_params["params"]}}
+        {"params": {"ContinuousActionPolicyTorso_0": single_params["params"]}}
     )
     single_outs: list[TanhMultivariateNormalDiag] = [
         policy.apply(policy_params, data[i]) for i in range(ensemble_md.num)
