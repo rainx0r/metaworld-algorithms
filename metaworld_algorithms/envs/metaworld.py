@@ -147,7 +147,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         return metalearning_evaluation(
             agent,  # pyright: ignore[reportArgumentType]
             envs,
-            num_episodes=self.evaluation_num_episodes,
+            evaluation_episodes=self.evaluation_num_episodes,
             max_episode_steps=self.max_episode_steps,
             adaptation_steps=self.evaluation_adaptation_steps,
             adaptation_episodes=self.evaluation_adaptation_episodes,
@@ -172,7 +172,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         return metalearning_evaluation(
             agent,  # pyright: ignore[reportArgumentType]
             envs,
-            num_episodes=self.evaluation_num_episodes,
+            evaluation_episodes=self.evaluation_num_episodes,
             max_episode_steps=self.max_episode_steps,
             adaptation_steps=self.evaluation_adaptation_steps,
             adaptation_episodes=self.evaluation_adaptation_episodes,

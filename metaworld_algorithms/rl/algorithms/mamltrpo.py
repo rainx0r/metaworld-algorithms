@@ -221,7 +221,10 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
 
     class MAMLTRPOWrapped(MetaLearningAgent):
         def __init__(self, agent: "MAMLTRPO"):
-            self.agent = agent.init_ensemble_networks()
+            self.agent = agent
+
+        def reset_state(self):
+            self.agent = self.agent.init_ensemble_networks()
 
         def adapt_action(
             self, observations: npt.NDArray[np.float64]
