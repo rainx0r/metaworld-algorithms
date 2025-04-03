@@ -310,7 +310,9 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         seed = jax.random.randint(
             minibatch_iterator_key, (), minval=0, maxval=jnp.iinfo(jnp.int32).max
         ).item()
-        minibatch_iterator = to_minibatch_iterator(data, self.num_gradient_steps, int(seed))
+        minibatch_iterator = to_minibatch_iterator(
+            data, self.num_gradient_steps, int(seed)
+        )
 
         logs = {}
         for epoch in range(self.num_epochs):

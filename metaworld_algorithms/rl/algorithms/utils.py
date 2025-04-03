@@ -74,7 +74,7 @@ def to_minibatch_iterator(
     rng_state = rng.bit_generator.state
 
     while True:
-        for field in data:
+        for field in rollouts:
             rng.bit_generator.state = rng_state
             if field is not None:
                 rng.shuffle(field)
@@ -84,7 +84,7 @@ def to_minibatch_iterator(
             yield Rollout(
                 *map(
                     lambda x: x[start:end] if x is not None else None,  # pyright: ignore[reportArgumentType]
-                    data,
+                    rollouts,
                 )
             )
 

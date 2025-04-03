@@ -621,7 +621,6 @@ class OnPolicyAlgorithm(
                 self, logs = self.update(
                     rollouts, dones=terminations, next_obs=next_obs
                 )
-
                 rollout_buffer.reset()
 
                 if track:
