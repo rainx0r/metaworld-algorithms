@@ -233,3 +233,6 @@ class Run:
                 wandb.log_artifact(best_ckpt_artifact)
 
             checkpoint_manager.close()
+
+        if self._wandb_enabled:
+            wandb.finish()
