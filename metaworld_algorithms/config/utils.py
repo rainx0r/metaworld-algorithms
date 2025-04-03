@@ -46,3 +46,7 @@ class Optimizer(enum.Enum):
 
     def __call__(self, learning_rate: float, **kwargs):
         return self.value(learning_rate, **kwargs)
+
+class StdType(enum.Enum):
+    MLP_HEAD = enum.auto()
+    PARAM = enum.auto()

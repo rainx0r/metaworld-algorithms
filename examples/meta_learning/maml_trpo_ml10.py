@@ -2,22 +2,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import tyro
-# import jax
 
-from metaworld_algorithms.config.networks import (
-    ContinuousActionPolicyConfig,
-    ValueFunctionConfig,
-)
-from metaworld_algorithms.config.nn import VanillaNetworkConfig
-from metaworld_algorithms.config.optim import OptimizerConfig
 from metaworld_algorithms.config.rl import (
     GradientBasedMetaLearningTrainingConfig,
 )
 from metaworld_algorithms.envs import MetaworldMetaLearningConfig
 from metaworld_algorithms.rl.algorithms import MAMLTRPOConfig
 from metaworld_algorithms.run import Run
-
-# jax.config.update("jax_debug_nans", True)
 
 
 @dataclass(frozen=True)
@@ -46,16 +37,6 @@ def main() -> None:
         algorithm=MAMLTRPOConfig(
             num_tasks=meta_batch_size,
             gamma=0.99,
-            policy_config=ContinuousActionPolicyConfig(
-                network_config=VanillaNetworkConfig(
-                    optimizer=OptimizerConfig(max_grad_norm=1.0)
-                )
-            ),
-            vf_config=ValueFunctionConfig(
-                network_config=VanillaNetworkConfig(
-                    optimizer=OptimizerConfig(max_grad_norm=1.0),
-                )
-            ),
             gae_lambda=1.0,
         ),
         training_config=GradientBasedMetaLearningTrainingConfig(

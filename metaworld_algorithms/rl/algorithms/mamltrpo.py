@@ -16,7 +16,6 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from metaworld_algorithms.config.envs import MetaLearningEnvConfig
 from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
-    ValueFunctionConfig,
 )
 from metaworld_algorithms.config.rl import AlgorithmConfig
 from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
@@ -95,7 +94,6 @@ def _sample_action_dist(
 class MAMLTRPOConfig(AlgorithmConfig):
     policy_config: ContinuousActionPolicyConfig = ContinuousActionPolicyConfig()
     policy_inner_lr: float = 0.1
-    vf_config: ValueFunctionConfig = ValueFunctionConfig()
     meta_batch_size: int = 20
     delta: float = 0.01
     cg_iters: int = 10
@@ -156,7 +154,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         )
         policy = MetaTrainState.create(
             params=policy_net.init_single(policy_key, dummy_obs),
-            tx=config.policy_config.network_config.optimizer.spawn(),
+            tx=optax.identity(), # TRPO optimiser handles the gradients
             inner_train_state=TrainState.create(
                 params=dict(),
                 tx=optax.sgd(learning_rate=config.policy_inner_lr),

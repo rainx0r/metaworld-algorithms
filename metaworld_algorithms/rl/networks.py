@@ -12,6 +12,7 @@ from metaworld_algorithms.config.networks import (
     QValueFunctionConfig,
     ValueFunctionConfig,
 )
+from metaworld_algorithms.config.utils import StdType
 from metaworld_algorithms.nn import get_nn_arch_for_config
 from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.nn.initializers import uniform
@@ -26,14 +27,36 @@ class ContinuousActionPolicy(nn.Module):
 
     @nn.compact
     def __call__(self, x: jax.Array) -> distrax.Distribution:
+        mlp_head_dim = self.action_dim
+        if self.config.std_type == StdType.MLP_HEAD:
+            mlp_head_dim *= 2
+
+        head_kernel_init = uniform(1e-3)
+        if self.config.head_kernel_init is not None:
+            head_kernel_init = self.config.head_kernel_init()
+
+        head_bias_init = uniform(1e-3)
+        if self.config.head_bias_init is not None:
+            head_bias_init = self.config.head_bias_init()
+
         x = get_nn_arch_for_config(self.config.network_config)(
             config=self.config.network_config,
-            head_dim=self.action_dim * 2,
-            head_kernel_init=uniform(1e-3),
-            head_bias_init=uniform(1e-3),
+            head_dim=mlp_head_dim,
+            head_kernel_init=head_kernel_init,
+            head_bias_init=head_bias_init,
         )(x)
 
-        mean, log_std = jnp.split(x, 2, axis=-1)
+        if self.config.std_type == StdType.MLP_HEAD:
+            mean, log_std = jnp.split(x, 2, axis=-1)
+        elif self.config.std_type == StdType.PARAM:
+            mean = x
+            log_std = self.param(  # init std to 1
+                "log_std", nn.initializers.zeros_init(), (self.action_dim,)
+            )
+            log_std = jnp.broadcast_to(log_std, mean.shape)
+        else:
+            raise ValueError("Invalid std_type: %s" % self.config.std_type)
+
         log_std = jnp.clip(
             log_std, a_min=self.config.log_std_min, a_max=self.config.log_std_max
         )
@@ -156,7 +179,6 @@ class EnsembleMDContinuousActionPolicy(nn.Module):
 
     def init_single(self, rng: PRNGKeyArray, x: jax.Array) -> nn.FrozenDict | dict:
         return self._net_cls(parent=None).init(rng, x)
-
 
     def expand_params(self, params: nn.FrozenDict | dict) -> nn.FrozenDict:
         inner_params = jax.tree.map(
