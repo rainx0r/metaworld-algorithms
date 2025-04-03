@@ -9,9 +9,9 @@ Implementations of Multi-Task and Meta-Learning baselines for the Metaworld benc
 1. Create a virtual environment for the project: `uv venv .venv --python 3.12`
 2. Activate the virtual environment: `source .venv/bin/activate`
 3. Install the dependencies: `uv pip install -e ".[cuda12]"`
-   > [!NOTE]
-   > To use other accelerators, replace `cuda12` with the appropriate accelerator name.
-   > Valid options are `cpu`, `tpu`, `cuda12`, and `metal`.
+> [!NOTE]
+> To use other accelerators, replace `cuda12` with the appropriate accelerator name.
+> Valid options are `cpu`, `tpu`, `cuda12`, and `metal`.
 
 ## Structure
 
