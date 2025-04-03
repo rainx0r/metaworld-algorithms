@@ -677,5 +677,6 @@ class OnPolicyAlgorithm(
                     # Reset envs again to exit eval mode
                     obs, _ = envs.reset()
                     has_autoreset = np.full((envs.num_envs,), False)
+                    episode_started = np.full((envs.num_envs,), 1.0)
 
         return self

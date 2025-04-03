@@ -204,9 +204,9 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         assert data.advantages is not None
 
         if self.normalize_advantages:
-            advantages = (data.advantages - data.advantages.mean(axis=0, keepdims=True)) / (
-                data.advantages.std(axis=0, keepdims=True) + 1e-8
-            )
+            advantages = (
+                data.advantages - data.advantages.mean(axis=0, keepdims=True)
+            ) / (data.advantages.std(axis=0, keepdims=True) + 1e-8)
         else:
             advantages = data.advantages
 
@@ -305,14 +305,12 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             last_values = _get_value(self.value_function, next_obs)
         data = compute_gae(data, self.gamma, self.gae_lambda, last_values, dones)
 
-        key, minibatch_itoerator_key = jax.random.split(self.key)
+        key, minibatch_iterator_key = jax.random.split(self.key)
         self = self.replace(key=key)
-        seed = int(
-            jax.random.randint(
-                minibatch_itoerator_key, (), minval=0, maxval=jnp.iinfo(jnp.int32).max
-            ).item()
-        )
-        minibatch_iterator = to_minibatch_iterator(data, self.num_gradient_steps, seed)
+        seed = jax.random.randint(
+            minibatch_iterator_key, (), minval=0, maxval=jnp.iinfo(jnp.int32).max
+        ).item()
+        minibatch_iterator = to_minibatch_iterator(data, self.num_gradient_steps, int(seed))
 
         logs = {}
         for epoch in range(self.num_epochs):
@@ -328,4 +326,4 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
                     )
                     break
 
-        return self._update_inner(data)
+        return self, logs
