@@ -183,16 +183,12 @@ class GradientBasedMetaLearningAlgorithm(
         # that needs to be carried over when they're used.
         eval_envs = env_config.spawn_test(seed)
 
-        obs, _ = zip(*envs.call("sample_tasks"))
-        obs = np.stack(obs)
-
         start_time = time.time()
 
         steps_per_iter = (
             config.meta_batch_size
             * config.rollouts_per_task
             * env_config.max_episode_steps
-            # * (config.num_inner_gradient_steps + 1)
         )
 
         for _iter in range(
@@ -200,6 +196,8 @@ class GradientBasedMetaLearningAlgorithm(
         ):  # Outer step
             global_step = _iter * steps_per_iter
             print(f"Iteration {_iter}, Global num of steps {global_step}")
+
+            envs.call("sample_tasks")
             self = self.init_ensemble_networks()
             all_rollouts: list[Rollout] = []
 
@@ -207,9 +205,10 @@ class GradientBasedMetaLearningAlgorithm(
             # Collect num_inner_gradient_steps D datasets + collect 1 D' dataset
             for _step in range(config.num_inner_gradient_steps + 1):
                 print(f"- Collecting inner step {_step}")
+                obs, _ = envs.reset()
+                rollout_buffer.reset()
                 episode_started = np.full((envs.num_envs,), 1.0)
                 has_autoreset = np.full((envs.num_envs,), False)
-                obs, _ = envs.reset()
 
                 while not rollout_buffer.ready:
                     self, actions, aux_policy_outs = self.sample_action_and_aux(obs)
@@ -248,7 +247,6 @@ class GradientBasedMetaLearningAlgorithm(
 
                 rollouts = rollout_buffer.get()
                 all_rollouts.append(rollouts)
-                rollout_buffer.reset()
 
                 # Inner policy update for the sake of sampling close to adapted policy during the
                 # computation of the objective.
@@ -330,10 +328,6 @@ class GradientBasedMetaLearningAlgorithm(
             print("- SPS: ", sps)
             if track:
                 wandb.log({"charts/SPS": sps} | logs, step=global_step)
-
-            # Set tasks for next iteration
-            obs, _ = zip(*envs.call("sample_tasks"))
-            obs = np.stack(obs)
 
         return self
 
