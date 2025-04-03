@@ -13,7 +13,7 @@ dependencies = [
     "numpy>=2.1.2",
     "orbax-checkpoint>=0.7.0",
     "tyro>=0.8.11",
-    "wandb>=0.18.5",
+    "wandb>=0.19",
     "scipy>=1.15.2",
 ]
 
