@@ -1,6 +1,18 @@
 # metaworld-algorithms
 Implementations of Multi-Task and Meta-Learning baselines for the Metaworld benchmark
 
+## Installation
+
+### From a clone of the repository
+
+0. Install [uv](https://docs.astral.sh/uv/)
+1. Create a virtual environment for the project: `uv venv .venv --python 3.12`
+2. Activate the virtual environment: `source .venv/bin/activate`
+3. Install the dependencies: `uv pip install -e ".[cuda12]"`
+   > [!NOTE]
+   > To use other accelerators, replace `cuda12` with the appropriate accelerator name.
+   > Valid options are `cpu`, `tpu`, `cuda12`, and `metal`.
+
 ## Structure
 
 Here is how you can navigate this repository:
