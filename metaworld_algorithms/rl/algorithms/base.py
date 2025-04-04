@@ -189,6 +189,7 @@ class GradientBasedMetaLearningAlgorithm(
             config.meta_batch_size
             * config.rollouts_per_task
             * env_config.max_episode_steps
+            * (config.num_inner_gradient_steps + 1)
         )
 
         for _iter in range(
