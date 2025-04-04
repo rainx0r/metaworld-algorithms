@@ -17,6 +17,7 @@ class MetaworldConfig(EnvConfig):
     reward_func_version: str = "v2"
     num_goals: int = 50
     reward_normalization_method: str | None = None
+    env_name: str | None = None
 
     @cached_property
     @override
@@ -181,6 +182,16 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
 
     @override
     def spawn(self, seed: int = 1) -> GymVectorEnv:
+        if self.env_name:
+            return gym.make_vec(  # pyright: ignore[reportReturnType]
+                f"Meta-World/{self.env_id}-train",
+                env_name=self.env_name,
+                seed=seed,
+                terminate_on_success=self.terminate_on_success,
+                vector_strategy="async",
+                meta_batch_size=self.meta_batch_size,
+                total_tasks_per_cls=self.total_goals_per_task_train,
+            )
         return gym.make_vec(  # pyright: ignore[reportReturnType]
             f"Meta-World/{self.env_id}-train",
             seed=seed,
@@ -192,6 +203,16 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
 
     @override
     def spawn_test(self, seed: int = 1) -> GymVectorEnv:
+        if self.env_name:
+            return gym.make_vec(  # pyright: ignore[reportReturnType]
+                f"Meta-World/{self.env_id}-test",
+                env_name=self.env_name,
+                seed=seed,
+                terminate_on_success=True,
+                vector_strategy="async",
+                meta_batch_size=self.meta_batch_size,
+                total_tasks_per_cls=self.total_goals_per_task_test,
+            )
         return gym.make_vec(  # pyright: ignore[reportReturnType]
             f"Meta-World/{self.env_id}-test",
             seed=seed,
