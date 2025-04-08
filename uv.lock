@@ -655,7 +655,7 @@ wheels = [
 [[package]]
 name = "metaworld"
 version = "2.0.0"
-source = { git = "https://github.com/reginald-mclean/Metaworld.git?rev=release#62484453f559bc86d2ab0a30f16a0426c27b3a1c" }
+source = { git = "https://github.com/reginald-mclean/Metaworld.git?rev=same-step-autoreset#182673d2081070593e68ce34a13f29118879788a" }
 dependencies = [
     { name = "gymnasium" },
     { name = "imageio" },
@@ -713,7 +713,7 @@ requires-dist = [
     { name = "jax", extras = ["tpu"], marker = "extra == 'tpu'", specifier = ">=0.5.0" },
     { name = "jax-metal", marker = "sys_platform == 'darwin' and extra == 'metal'", specifier = ">=0.1.0" },
     { name = "jaxtyping", specifier = ">=0.2.34" },
-    { name = "metaworld", git = "https://github.com/reginald-mclean/Metaworld.git?rev=release" },
+    { name = "metaworld", git = "https://github.com/reginald-mclean/Metaworld.git?rev=same-step-autoreset" },
     { name = "numpy", specifier = ">=2.1.2" },
     { name = "orbax-checkpoint", specifier = ">=0.7.0" },
     { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.3.5" },

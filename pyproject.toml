@@ -40,7 +40,7 @@ conflicts = [
 ]
 
 [tool.uv.sources]
-metaworld = { git = "https://github.com/reginald-mclean/Metaworld.git", rev = "release" }
+metaworld = { git = "https://github.com/reginald-mclean/Metaworld.git", rev = "same-step-autoreset" }
 
 [tool.ruff]
 ignore = ["F722"]
