@@ -182,42 +182,34 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
 
     @override
     def spawn(self, seed: int = 1) -> GymVectorEnv:
-        if self.env_name:
-            return gym.make_vec(  # pyright: ignore[reportReturnType]
-                f"Meta-World/{self.env_id}-train",
-                env_name=self.env_name,
-                seed=seed,
-                terminate_on_success=self.terminate_on_success,
-                vector_strategy="async",
-                meta_batch_size=self.meta_batch_size,
-                total_tasks_per_cls=self.total_goals_per_task_train,
-            )
-        return gym.make_vec(  # pyright: ignore[reportReturnType]
-            f"Meta-World/{self.env_id}-train",
+        kwargs = dict(
             seed=seed,
             terminate_on_success=self.terminate_on_success,
             vector_strategy="async",
             meta_batch_size=self.meta_batch_size,
             total_tasks_per_cls=self.total_goals_per_task_train,
+            reward_function_version=self.reward_func_version,
+        )
+        if self.env_name:
+            kwargs["env_name"] = self.env_name
+        return gym.make_vec(  # pyright: ignore[reportReturnType]
+            f"Meta-World/{self.env_id}-train",
+            **kwargs, # pyright: ignore[reportArgumentType]
         )
 
     @override
     def spawn_test(self, seed: int = 1) -> GymVectorEnv:
-        if self.env_name:
-            return gym.make_vec(  # pyright: ignore[reportReturnType]
-                f"Meta-World/{self.env_id}-test",
-                env_name=self.env_name,
-                seed=seed,
-                terminate_on_success=True,
-                vector_strategy="async",
-                meta_batch_size=self.meta_batch_size,
-                total_tasks_per_cls=self.total_goals_per_task_test,
-            )
-        return gym.make_vec(  # pyright: ignore[reportReturnType]
-            f"Meta-World/{self.env_id}-test",
+        kwargs = dict(
             seed=seed,
             terminate_on_success=True,
             vector_strategy="async",
             meta_batch_size=self.meta_batch_size,
             total_tasks_per_cls=self.total_goals_per_task_test,
+            reward_function_version=self.reward_func_version,
+        )
+        if self.env_name:
+            kwargs["env_name"] = self.env_name
+        return gym.make_vec(  # pyright: ignore[reportReturnType]
+            f"Meta-World/{self.env_id}-test",
+            **kwargs, # pyright: ignore[reportArgumentType]
         )
