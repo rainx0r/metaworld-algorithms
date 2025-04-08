@@ -35,7 +35,7 @@ def main() -> None:
     num_tasks = 10
 
     run = Run(
-        run_name="ml10_mamltrpo",
+        run_name="ml10_mamltrpo_v1",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
