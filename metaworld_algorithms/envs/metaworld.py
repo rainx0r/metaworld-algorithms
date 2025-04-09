@@ -136,9 +136,11 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         # We could just use Metaworld's types throughout the project, but
         # I kind of don't want to rely on `from metaworld` imports outside this file.
 
+        print(self.env_id)
+
         if self.env_id == "ML10" or self.env_id == "ML45":
             num_classes = 5
-        elif self.env_id.startswith("ML1-"):
+        elif self.env_id == "ML1":
             num_classes = 1
         else:
             raise NotImplementedError(f"Unknown env_id: {self.env_id}")
@@ -163,7 +165,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             num_classes = 10
         elif  self.env_id == "ML45":
             num_classes = 45
-        elif self.env_id.startswith("ML1-"):
+        elif self.env_id == "ML1":
             num_classes = 1
         else:
             raise NotImplementedError(f"Unknown env_id: {self.env_id}")
