@@ -542,6 +542,7 @@ class OnPolicyAlgorithm(
         global_episodic_length: Deque[int] = deque([], maxlen=20 * self.num_tasks)
 
         obs, _ = envs.reset()
+        print(obs.shape)
 
         has_autoreset = np.full((envs.num_envs,), False)
         episode_started = np.full((envs.num_envs,), 1.0)

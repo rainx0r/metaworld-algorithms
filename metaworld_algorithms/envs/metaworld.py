@@ -82,6 +82,8 @@ class MetaworldConfig(EnvConfig):
             num_tasks = 1
             if self.env_id == "MT10":
                 num_tasks = 10
+            if self.env_id == "MT25":
+                num_tasks = 25
             if self.env_id == "MT50":
                 num_tasks = 50
             one_hot_ub = np.ones(num_tasks)
