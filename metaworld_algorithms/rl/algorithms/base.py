@@ -209,7 +209,6 @@ class GradientBasedMetaLearningAlgorithm(
                 obs, _ = envs.reset()
                 rollout_buffer.reset()
                 episode_started = np.full((envs.num_envs,), 1.0)
-                has_autoreset = np.full((envs.num_envs,), False)
 
                 while not rollout_buffer.ready:
                     self, actions, aux_policy_outs = self.sample_action_and_aux(obs)
@@ -218,33 +217,24 @@ class GradientBasedMetaLearningAlgorithm(
                         actions
                     )
 
-                    if not has_autoreset.any():
-                        rollout_buffer.add(
-                            obs,
-                            actions,
-                            rewards,
-                            episode_started,
-                            value=aux_policy_outs.get("value"),
-                            log_prob=aux_policy_outs.get("log_prob"),
-                            mean=aux_policy_outs.get("mean"),
-                            std=aux_policy_outs.get("std"),
-                        )
+                    rollout_buffer.add(
+                        obs,
+                        actions,
+                        rewards,
+                        episode_started,
+                        value=aux_policy_outs.get("value"),
+                        log_prob=aux_policy_outs.get("log_prob"),
+                        mean=aux_policy_outs.get("mean"),
+                        std=aux_policy_outs.get("std"),
+                    )
 
-                        episode_started = np.logical_or(terminations, truncations)
-                    elif has_autoreset.any() and not has_autoreset.all():
-                        # TODO: handle the case where only some envs have autoreset
-                        raise NotImplementedError(
-                            "Only some envs resetting isn't implemented at the moment."
-                        )
+                    episode_started = np.logical_or(terminations, truncations)
+                    obs = next_obs
 
-                    has_autoreset = np.logical_or(terminations, truncations)
-
-                    for i, env_ended in enumerate(has_autoreset):
+                    for i, env_ended in enumerate(episode_started):
                         if env_ended:
                             global_episodic_return.append(infos["episode"]["r"][i])
                             global_episodic_length.append(infos["episode"]["l"][i])
-
-                    obs = next_obs
 
                 rollouts = rollout_buffer.get()
                 all_rollouts.append(rollouts)
@@ -365,7 +355,7 @@ class OffPolicyAlgorithm(
 
         obs, _ = envs.reset()
 
-        has_autoreset = np.full((envs.num_envs,), False)
+        done = np.full((envs.num_envs,), False)
         start_step, episodes_ended = 0, 0
 
         if checkpoint_metadata is not None:
@@ -382,31 +372,23 @@ class OffPolicyAlgorithm(
             total_steps = global_step * envs.num_envs
 
             if global_step < config.warmstart_steps:
-                actions = np.array(
-                    [envs.single_action_space.sample() for _ in range(envs.num_envs)]
-                )
+                actions = envs.action_space.sample()
             else:
                 self, actions = self.sample_action(obs)
 
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+            done = np.logical_or(terminations, truncations)
 
-            if not has_autoreset.any():
-                replay_buffer.add(obs, next_obs, actions, rewards, terminations)
-            elif has_autoreset.any() and not has_autoreset.all():
-                # TODO: handle the case where only some envs have autoreset
-                raise NotImplementedError(
-                    "Only some envs resetting isn't implemented at the moment."
-                )
+            buffer_obs = np.where(done, infos["final_obs"], next_obs)
+            replay_buffer.add(obs, buffer_obs, actions, rewards, done)
 
-            has_autoreset = np.logical_or(terminations, truncations)
+            obs = next_obs
 
-            for i, env_ended in enumerate(has_autoreset):
+            for i, env_ended in enumerate(done):
                 if env_ended:
                     global_episodic_return.append(infos["episode"]["r"][i])
                     global_episodic_length.append(infos["episode"]["l"][i])
                     episodes_ended += 1
-
-            obs = next_obs
 
             if global_step % 500 == 0 and global_episodic_return:
                 print(
@@ -443,7 +425,7 @@ class OffPolicyAlgorithm(
                 if (
                     config.evaluation_frequency > 0
                     and episodes_ended % config.evaluation_frequency == 0
-                    and has_autoreset.any()
+                    and done.any()
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
@@ -466,7 +448,7 @@ class OffPolicyAlgorithm(
 
                     # Checkpointing
                     if checkpoint_manager is not None:
-                        if not has_autoreset.all():
+                        if not done.all():
                             raise NotImplementedError(
                                 "Checkpointing currently doesn't work for the case where evaluation is run before all envs have finished their episodes / are about to be reset."
                             )
@@ -489,7 +471,6 @@ class OffPolicyAlgorithm(
 
                     # Reset envs again to exit eval mode
                     obs, _ = envs.reset()
-                    has_autoreset = np.full((envs.num_envs,), False)
 
         return self
 
@@ -542,9 +523,7 @@ class OnPolicyAlgorithm(
         global_episodic_length: Deque[int] = deque([], maxlen=20 * self.num_tasks)
 
         obs, _ = envs.reset()
-        print(obs.shape)
 
-        has_autoreset = np.full((envs.num_envs,), False)
         episode_started = np.full((envs.num_envs,), 1.0)
         start_step, episodes_ended = 0, 0
 
@@ -560,37 +539,27 @@ class OnPolicyAlgorithm(
             total_steps = global_step * envs.num_envs
 
             self, actions, aux_policy_outs = self.sample_action_and_aux(obs)
-
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
-            if not has_autoreset.any():
-                rollout_buffer.add(
-                    obs,
-                    actions,
-                    rewards,
-                    episode_started,
-                    value=aux_policy_outs.get("value"),
-                    log_prob=aux_policy_outs.get("log_prob"),
-                    mean=aux_policy_outs.get("mean"),
-                    std=aux_policy_outs.get("std"),
-                )
+            rollout_buffer.add(
+                obs,
+                actions,
+                rewards,
+                episode_started,
+                value=aux_policy_outs.get("value"),
+                log_prob=aux_policy_outs.get("log_prob"),
+                mean=aux_policy_outs.get("mean"),
+                std=aux_policy_outs.get("std"),
+            )
 
-                episode_started = np.logical_or(terminations, truncations)
-            elif has_autoreset.any() and not has_autoreset.all():
-                # TODO: handle the case where only some envs have autoreset
-                raise NotImplementedError(
-                    "Only some envs resetting isn't implemented at the moment."
-                )
+            episode_started = np.logical_or(terminations, truncations)
+            obs = next_obs
 
-            has_autoreset = np.logical_or(terminations, truncations)
-
-            for i, env_ended in enumerate(has_autoreset):
+            for i, env_ended in enumerate(episode_started):
                 if env_ended:
                     global_episodic_return.append(infos["episode"]["r"][i])
                     global_episodic_length.append(infos["episode"]["l"][i])
                     episodes_ended += 1
-
-            obs = next_obs
 
             if global_step % 500 == 0 and global_episodic_return:
                 print(
@@ -621,7 +590,9 @@ class OnPolicyAlgorithm(
             if rollout_buffer.ready:
                 rollouts = rollout_buffer.get()
                 self, logs = self.update(
-                    rollouts, dones=terminations, next_obs=next_obs
+                    rollouts,
+                    dones=terminations,
+                    next_obs=np.where(terminations, infos["final_obs"], next_obs),
                 )
                 rollout_buffer.reset()
 
@@ -632,7 +603,7 @@ class OnPolicyAlgorithm(
                 if (
                     config.evaluation_frequency > 0
                     and episodes_ended % config.evaluation_frequency == 0
-                    and has_autoreset.any()
+                    and episode_started.any()
                     and global_step > 0
                 ):
                     mean_success_rate, mean_returns, mean_success_per_task = (
@@ -655,7 +626,7 @@ class OnPolicyAlgorithm(
 
                     # Checkpointing
                     if checkpoint_manager is not None:
-                        if not has_autoreset.all():
+                        if not episode_started.all():
                             raise NotImplementedError(
                                 "Checkpointing currently doesn't work for the case where evaluation is run before all envs have finished their episodes / are about to be reset."
                             )
@@ -677,7 +648,6 @@ class OnPolicyAlgorithm(
 
                     # Reset envs again to exit eval mode
                     obs, _ = envs.reset()
-                    has_autoreset = np.full((envs.num_envs,), False)
                     episode_started = np.full((envs.num_envs,), 1.0)
 
         return self

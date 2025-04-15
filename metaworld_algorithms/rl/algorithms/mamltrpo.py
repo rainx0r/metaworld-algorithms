@@ -141,7 +141,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
 
         algorithm_key, policy_key = jax.random.split(master_key, 2)
         policy_net = EnsembleMDContinuousActionPolicy(
-            num=env_config.meta_batch_size,
+            num=config.meta_batch_size,
             action_dim=int(np.prod(env_config.action_space.shape)),
             config=config.policy_config,
         )
@@ -149,7 +149,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         dummy_obs = jnp.array(
             [
                 env_config.observation_space.sample()
-                for _ in range(env_config.meta_batch_size)
+                for _ in range(config.meta_batch_size)
             ]
         )
 
