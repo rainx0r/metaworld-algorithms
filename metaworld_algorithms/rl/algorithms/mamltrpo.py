@@ -31,6 +31,7 @@ from metaworld_algorithms.types import (
     MetaLearningAgent,
     Observation,
     Rollout,
+    Timestep,
 )
 
 from .base import GradientBasedMetaLearningAlgorithm
@@ -222,30 +223,35 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
 
     class MAMLTRPOWrapped(MetaLearningAgent):
         def __init__(self, agent: "MAMLTRPO"):
-            self.agent = agent
+            self._agent = agent
 
-        def reset_state(self):
-            self.agent = self.agent.init_ensemble_networks()
+        def init(self) -> None:
+            self._current_agent = self._agent.init_ensemble_networks()
+            self._buffer = []
 
         def adapt_action(
             self, observations: npt.NDArray[np.float64]
         ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]:
-            self.agent, action, aux_policy_outs = self.agent.sample_action_and_aux(
+            self._current_agent, action, aux_policy_outs = self._current_agent.sample_action_and_aux(
                 observations
             )
             return action, aux_policy_outs
 
-        def adapt(self, rollouts: Rollout) -> None:
-            # MetaWorld's evaluation stores done instead of episode_start
-            # TODO: Maybe just change the interface?
+        def step(self, timestep: Timestep) -> None:
+            self._buffer.append(timestep)
+
+        def adapt(self) -> None:
+            rollouts = Rollout.from_list(self._buffer)
+            # NOTE: MetaWorld's evaluation stores done instead of episode_start
             rollouts = dones_to_episode_starts(rollouts)
-            rollouts = self.agent.compute_advantages(rollouts)
-            self.agent = self.agent.adapt(rollouts)
+            rollouts = self._current_agent.compute_advantages(rollouts)
+            self._current_agent = self._current_agent.adapt(rollouts)
+            self._buffer.clear()
 
         def eval_action(
             self, observations: npt.NDArray[np.float64]
         ) -> npt.NDArray[np.float64]:
-            return self.agent.eval_action(observations)
+            return self._current_agent.eval_action(observations)
 
     @override
     def wrap(self) -> MetaLearningAgent:

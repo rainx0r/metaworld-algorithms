@@ -42,6 +42,33 @@ class Rollout(NamedTuple):
     returns: Float[np.ndarray, "timestep task 1"] | None = None
     advantages: Float[np.ndarray, "timestep task 1"] | None = None
 
+    @classmethod
+    def from_list(cls, items: list) -> "Rollout":
+        if isinstance(items[0], Timestep):
+            items = list(map(lambda x: x.to_rollout(), items))
+        return cls(*map(lambda *xs: np.stack(xs), *items))
+
+
+class Timestep(NamedTuple):
+    observation: npt.NDArray
+    action: npt.NDArray
+    reward: npt.NDArray
+    terminated: npt.NDArray
+    truncated: npt.NDArray
+    aux_policy_outputs: dict[str, npt.NDArray]
+
+    def to_rollout(self) -> Rollout:
+        return Rollout(
+            observations=self.observation,
+            actions=self.action,
+            rewards=self.reward,
+            dones=self.terminated,
+            log_probs=self.aux_policy_outputs.get("log_prob"),
+            means=self.aux_policy_outputs.get("mean"),
+            stds=self.aux_policy_outputs.get("std"),
+            values=self.aux_policy_outputs.get("value"),
+        )
+
 
 class Agent(Protocol):
     def eval_action(
@@ -50,11 +77,15 @@ class Agent(Protocol):
 
 
 class MetaLearningAgent(Agent, Protocol):
+    def init(self) -> None: ...
+
     def adapt_action(
         self, observations: npt.NDArray[np.float64]
     ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]: ...
 
-    def adapt(self, rollouts: Rollout) -> None: ...
+    def step(self, timestep: Timestep) -> None: ...
+
+    def adapt(self) -> None: ...
 
 
 class CheckpointMetadata(TypedDict):
