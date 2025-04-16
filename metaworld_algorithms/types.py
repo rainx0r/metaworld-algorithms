@@ -44,8 +44,8 @@ class Rollout(NamedTuple):
 
     @classmethod
     def from_list(cls, items: list) -> "Rollout":
-        if isinstance(items[0], Timestep):
-            items = list(map(lambda x: x.to_rollout(), items))
+        if Timestep.is_timestep(items[0]):
+            items = list(map(lambda x: Timestep.to_rollout(x), items))
         return cls(*map(lambda *xs: np.stack(xs), *items))
 
 
@@ -57,16 +57,25 @@ class Timestep(NamedTuple):
     truncated: npt.NDArray
     aux_policy_outputs: dict[str, npt.NDArray]
 
-    def to_rollout(self) -> Rollout:
+    @classmethod
+    def is_timestep(cls, item: Any) -> bool:
+        return hasattr(item, "_fields") and item._fields == cls._fields
+
+    @staticmethod
+    def to_rollout(item: "Timestep") -> Rollout:
+        log_probs = item.aux_policy_outputs.get("log_prob")
+        if log_probs is not None:
+            log_probs = log_probs[..., None]
+
         return Rollout(
-            observations=self.observation,
-            actions=self.action,
-            rewards=self.reward,
-            dones=self.terminated,
-            log_probs=self.aux_policy_outputs.get("log_prob"),
-            means=self.aux_policy_outputs.get("mean"),
-            stds=self.aux_policy_outputs.get("std"),
-            values=self.aux_policy_outputs.get("value"),
+            observations=item.observation,
+            actions=item.action,
+            rewards=item.reward[..., None],
+            dones=item.truncated[..., None],
+            log_probs=log_probs,
+            means=item.aux_policy_outputs.get("mean"),
+            stds=item.aux_policy_outputs.get("std"),
+            values=item.aux_policy_outputs.get("value"),
         )
 
 

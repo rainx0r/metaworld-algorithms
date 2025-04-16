@@ -138,8 +138,6 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         # We could just use Metaworld's types throughout the project, but
         # I kind of don't want to rely on `from metaworld` imports outside this file.
 
-        print(self.env_id)
-
         if self.env_id == "ML10" or self.env_id == "ML45":
             num_classes = 5
         elif self.env_id == "ML1":
@@ -153,7 +151,6 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             agent,  # pyright: ignore[reportArgumentType]
             envs,
             evaluation_episodes=self.evaluation_num_episodes,
-            max_episode_steps=self.max_episode_steps,
             adaptation_steps=self.evaluation_adaptation_steps,
             adaptation_episodes=self.evaluation_adaptation_episodes,
             num_evals=num_evals,
@@ -178,7 +175,6 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             agent,  # pyright: ignore[reportArgumentType]
             envs,
             evaluation_episodes=self.evaluation_num_episodes,
-            max_episode_steps=self.max_episode_steps,
             adaptation_steps=self.evaluation_adaptation_steps,
             adaptation_episodes=self.evaluation_adaptation_episodes,
             num_evals=num_evals,

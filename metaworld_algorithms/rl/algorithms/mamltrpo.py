@@ -64,7 +64,7 @@ def _eval_action(
     return dist.mode()
 
 
-# @jax.jit
+@jax.jit
 def _sample_action_dist(
     policy: TrainState,
     observation: Observation,
@@ -194,7 +194,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
     ) -> tuple[Self, Action, AuxPolicyOutputs]:
         rets = _sample_action_dist(self.policy.inner_train_state, observation, self.key)
         action, log_prob, mean, std = jax.device_get(rets[:-1])
-        key = jax.device_get(rets[-1])
+        key = rets[-1]
         return (
             self.replace(key=key),
             action,
@@ -266,10 +266,6 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
             rollouts, self.gamma
         )
-        if not hasattr(rollouts, "returns"):
-            # For Rollout from MetaWorld's evaluation interface
-            # TODO: Maybe just change the interface?
-            rollouts = Rollout(*rollouts)
         rollouts = rollouts._replace(values=values, returns=returns)
         rollouts = compute_gae(
             rollouts, self.gamma, self.gae_lambda, last_values=None, dones=dones
