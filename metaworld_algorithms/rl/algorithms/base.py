@@ -233,8 +233,12 @@ class GradientBasedMetaLearningAlgorithm(
 
                     for i, env_ended in enumerate(episode_started):
                         if env_ended:
-                            global_episodic_return.append(infos["episode"]["r"][i])
-                            global_episodic_length.append(infos["episode"]["l"][i])
+                            global_episodic_return.append(
+                                infos["final_info"]["episode"]["r"][i]
+                            )
+                            global_episodic_length.append(
+                                infos["final_info"]["episode"]["l"][i]
+                            )
 
                 rollouts = rollout_buffer.get()
                 all_rollouts.append(rollouts)
@@ -379,15 +383,21 @@ class OffPolicyAlgorithm(
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
             done = np.logical_or(terminations, truncations)
 
-            buffer_obs = np.where(done, infos["final_obs"], next_obs)
+            buffer_obs = next_obs
+            if "final_obs" in infos:
+                buffer_obs = np.where(done[:, None], np.stack(infos["final_obs"]), next_obs)
             replay_buffer.add(obs, buffer_obs, actions, rewards, done)
 
             obs = next_obs
 
             for i, env_ended in enumerate(done):
                 if env_ended:
-                    global_episodic_return.append(infos["episode"]["r"][i])
-                    global_episodic_length.append(infos["episode"]["l"][i])
+                    global_episodic_return.append(
+                        infos["final_info"]["episode"]["r"][i]
+                    )
+                    global_episodic_length.append(
+                        infos["final_info"]["episode"]["l"][i]
+                    )
                     episodes_ended += 1
 
             if global_step % 500 == 0 and global_episodic_return:
@@ -557,8 +567,12 @@ class OnPolicyAlgorithm(
 
             for i, env_ended in enumerate(episode_started):
                 if env_ended:
-                    global_episodic_return.append(infos["episode"]["r"][i])
-                    global_episodic_length.append(infos["episode"]["l"][i])
+                    global_episodic_return.append(
+                        infos["final_info"]["episode"]["r"][i]
+                    )
+                    global_episodic_length.append(
+                        infos["final_info"]["episode"]["l"][i]
+                    )
                     episodes_ended += 1
 
             if global_step % 500 == 0 and global_episodic_return:
@@ -592,7 +606,9 @@ class OnPolicyAlgorithm(
                 self, logs = self.update(
                     rollouts,
                     dones=terminations,
-                    next_obs=np.where(terminations, infos["final_obs"], next_obs),
+                    next_obs=np.where(
+                        episode_started[:, None], np.stack(infos["final_obs"]), next_obs
+                    ),
                 )
                 rollout_buffer.reset()
 

@@ -38,13 +38,13 @@ def get_last_agent_checkpoint_save_args(
     agent: "Algorithm", metrics: dict[str, float]
 ) -> ocp.args.CheckpointArgs:
     return ocp.args.Composite(
-        agent=ocp.args.PyTreeSave(agent), metadata=ocp.args.JsonSave(metrics)
+        agent=ocp.args.StandardSave(agent), metadata=ocp.args.JsonSave(metrics)
     )
 
 
 def get_agent_checkpoint_restore_args(agent: "Algorithm") -> ocp.args.CheckpointArgs:
     return ocp.args.Composite(
-        agent=ocp.args.PyTreeRestore(agent),
+        agent=ocp.args.StandardRestore(agent),
         metadata=ocp.args.JsonRestore(),
     )
 
@@ -60,7 +60,7 @@ def get_checkpoint_save_args(
     if buffer is not None:
         rb_ckpt = buffer.checkpoint()
         buffer_args = ocp.args.Composite(
-            data=ocp.args.PyTreeSave(rb_ckpt["data"]),
+            data=ocp.args.StandardSave(rb_ckpt["data"]),
             rng_state=ocp.args.JsonSave(rb_ckpt["rng_state"]),
         )
     else:
@@ -69,10 +69,10 @@ def get_checkpoint_save_args(
     env_checkpoints = checkpoint_envs(envs)
 
     args = {
-        "agent": ocp.args.PyTreeSave(agent),
+        "agent": ocp.args.StandardSave(agent),
         "env_states": ocp.args.JsonSave(env_checkpoints),
         "rngs": ocp.args.Composite(
-            python_rng_state=ocp.args.PyTreeSave(random.getstate()),
+            python_rng_state=ocp.args.StandardSave(random.getstate()),
             global_numpy_rng_state=ocp.args.NumpyRandomKeySave(np.random.get_state()),
         ),
         "metadata": ocp.args.JsonSave(
@@ -94,17 +94,17 @@ def get_checkpoint_restore_args(
     if buffer is not None:
         rb_ckpt = buffer.checkpoint()
         buffer_args = ocp.args.Composite(
-            data=ocp.args.PyTreeRestore(rb_ckpt["data"]),
+            data=ocp.args.StandardRestore(rb_ckpt["data"]),
             rng_state=ocp.args.JsonRestore(),
         )
     else:
         buffer_args = None
 
     args = {
-        "agent": ocp.args.PyTreeRestore(agent),
+        "agent": ocp.args.StandardRestore(agent),
         "env_states": ocp.args.JsonRestore(),
         "rngs": ocp.args.Composite(
-            python_rng_state=ocp.args.PyTreeRestore(random.getstate()),
+            python_rng_state=ocp.args.StandardRestore(random.getstate()),
             global_numpy_rng_state=ocp.args.NumpyRandomKeyRestore(),
         ),
         "metadata": ocp.args.JsonRestore(),

@@ -545,10 +545,10 @@ name = "jax-metal"
 version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jax", version = "0.5.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "jaxlib", version = "0.5.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "six" },
-    { name = "wheel" },
+    { name = "jax", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+    { name = "jaxlib", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+    { name = "six", marker = "sys_platform != 'linux'" },
+    { name = "wheel", marker = "sys_platform != 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/ec/9bb7f7f0ffd06c3fb89813126b2f698636ac7a4263ed7bdd1ff7d7c94f8f/jax_metal-0.1.1-py3-none-macosx_10_14_x86_64.whl", hash = "sha256:d918a78443cb808c9491a24a5c2a94cc4eabfd0461d5bcda29a8f332dfbe9b7e", size = 54662235 },
@@ -715,7 +715,7 @@ requires-dist = [
     { name = "jaxtyping", specifier = ">=0.2.34" },
     { name = "metaworld", git = "https://github.com/reginald-mclean/Metaworld.git?rev=same-step-autoreset" },
     { name = "numpy", specifier = ">=2.1.2" },
-    { name = "orbax-checkpoint", specifier = ">=0.7.0" },
+    { name = "orbax-checkpoint", specifier = "<=0.11.11" },
     { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.3.5" },
     { name = "scipy", specifier = ">=1.15.2" },
     { name = "tyro", specifier = ">=0.8.11" },
@@ -990,7 +990,7 @@ wheels = [
 
 [[package]]
 name = "orbax-checkpoint"
-version = "0.11.12"
+version = "0.11.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py" },
@@ -1007,9 +1007,9 @@ dependencies = [
     { name = "tensorstore" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/b5/aa57013a99c35148f0f644f3d3a2dbeb9ade9d88fc93dab435dc4e6dc92c/orbax_checkpoint-0.11.12.tar.gz", hash = "sha256:f7c500ff0dc9ad5b2104ec0fbd2eeeae61830b00e0fc7e15d8e9eaaa095e8a8a", size = 294232 }
+sdist = { url = "https://files.pythonhosted.org/packages/66/46/816ec5f8635de683c7c1628dd1d002f8ea45f9cb05b6f741047f49069740/orbax_checkpoint-0.11.11.tar.gz", hash = "sha256:1a51ec4f2e5cf59688727fb3e8325a840e6e7a615e4d2730d723ee59da578e1e", size = 292052 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/8c/91cf510900872bc6419387bc01af7bc13d518aae60eb75200837e0bcedec/orbax_checkpoint-0.11.12-py3-none-any.whl", hash = "sha256:2880c3b2805a0f709265cdac0ba16dfad5a19a1c5849e56d1af274fd0080d93f", size = 406341 },
+    { url = "https://files.pythonhosted.org/packages/91/27/4a3289b7273d36e7affd0f07c2cecf3fcced2ac7f7952c17454d07cb3ad5/orbax_checkpoint-0.11.11-py3-none-any.whl", hash = "sha256:19ac77ae3dfd1cf975cd4bfb4f6ad04d818d1e7a18a88ca7973ba783bf974cb7", size = 403820 },
 ]
 
 [[package]]

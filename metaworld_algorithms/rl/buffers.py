@@ -114,7 +114,7 @@ class ReplayBuffer(AbstractReplayBuffer):
                 "pos": self.pos,
                 "full": self.full,
             },
-            "rng_state": self._rng.__getstate__(),
+            "rng_state": self._rng.bit_generator.state,
         }
 
     @override
@@ -126,7 +126,7 @@ class ReplayBuffer(AbstractReplayBuffer):
             assert key in ckpt["data"]
             setattr(self, key, ckpt["data"][key])
 
-        self._rng.__setstate__(ckpt["rng_state"])
+        self._rng.bit_generator.state = ckpt["rng_state"]
 
     @override
     def add(
@@ -273,7 +273,7 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
                 "pos": self.pos,
                 "full": self.full,
             },
-            "rng_state": self._rng.__getstate__(),
+            "rng_state": self._rng.bit_generator.state,
         }
 
     @override
@@ -285,7 +285,7 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
             assert key in ckpt["data"]
             setattr(self, key, ckpt["data"][key])
 
-        self._rng.__setstate__(ckpt["rng_state"])
+        self._rng.bit_generator.state = ckpt["rng_state"]
 
     @override
     def add(

@@ -58,6 +58,7 @@ def main() -> None:
         training_config=OnPolicyTrainingConfig(
             total_steps=int(2e7),
             rollout_steps=10_000,
+            evaluation_frequency=1_000_000 // 500,
         ),
         checkpoint=True,
         resume=args.resume,
