@@ -18,6 +18,7 @@ from metaworld_algorithms.config.rl import (
     MetaLearningTrainingConfig,
     OffPolicyTrainingConfig,
     OnPolicyTrainingConfig,
+    RNNBasedMetaLearningTrainingConfig,
     TrainingConfig,
 )
 from metaworld_algorithms.rl.buffers import (
@@ -33,6 +34,7 @@ from metaworld_algorithms.types import (
     LogDict,
     MetaLearningAgent,
     Observation,
+    RNNState,
     ReplayBufferCheckpoint,
     ReplayBufferSamples,
     Rollout,
@@ -104,7 +106,7 @@ class MetaLearningAlgorithm(
     ) -> "MetaLearningAlgorithm": ...
 
     @abc.abstractmethod
-    def update(self, data: list[Rollout]) -> tuple[Self, LogDict]: ...
+    def update(self, data: DataType) -> tuple[Self, LogDict]: ...
 
     @abc.abstractmethod
     def wrap(self) -> MetaLearningAgent: ...
@@ -260,6 +262,199 @@ class GradientBasedMetaLearningAlgorithm(
             # Outer policy update
             print("- Computing outer step")
             self, logs = self.update(all_rollouts)
+
+            # Evaluation
+            if global_step % config.evaluation_frequency == 0 and global_step > 0:
+                print("- Evaluating on the test set...")
+                mean_success_rate, mean_returns, mean_success_per_task = (
+                    env_config.evaluate_metalearning(eval_envs, self.wrap())
+                )
+
+                eval_metrics = {
+                    "charts/mean_success_rate": float(mean_success_rate),
+                    "charts/mean_evaluation_return": float(mean_returns),
+                } | {
+                    f"charts/{task_name}_success_rate": float(success_rate)
+                    for task_name, success_rate in mean_success_per_task.items()
+                }
+
+                if config.evaluate_on_train:
+                    print("- Evaluating on the train set...")
+                    _, _, eval_success_rate_per_train_task = (
+                        env_config.evaluate_metalearning_on_train(
+                            envs=envs,
+                            agent=self.wrap(),
+                        )
+                    )
+                    for (
+                        task_name,
+                        success_rate,
+                    ) in eval_success_rate_per_train_task.items():
+                        eval_metrics[f"charts/{task_name}_train_success_rate"] = float(
+                            success_rate
+                        )
+
+                print(
+                    f"Mean evaluation success rate: {mean_success_rate:.4f}"
+                    + f" return: {mean_returns:.4f}"
+                )
+
+                if track:
+                    wandb.log(eval_metrics, step=global_step)
+
+                if checkpoint_manager is not None:
+                    checkpoint_manager.save(
+                        global_step,
+                        args=get_checkpoint_save_args(
+                            self,
+                            envs,
+                            global_step,
+                            episodes_ended,
+                            run_timestamp,
+                        ),
+                        metrics={
+                            k.removeprefix("charts/"): v
+                            for k, v in eval_metrics.items()
+                        },
+                    )
+                    print("- Saved Model")
+
+            # Logging
+            print(logs)
+            sps = global_step / (time.time() - start_time)
+            print("- SPS: ", sps)
+            if track:
+                wandb.log({"charts/SPS": sps} | logs, step=global_step)
+
+        return self
+
+
+
+class RNNBasedMetaLearningAlgorithm(
+    MetaLearningAlgorithm[
+        AlgorithmConfigType, RNNBasedMetaLearningTrainingConfig, Rollout
+    ],
+    Generic[AlgorithmConfigType],
+):
+    @abc.abstractmethod
+    def sample_action_and_aux(
+        self, state: RNNState, observation: Observation
+    ) -> tuple[Self, RNNState, Action, AuxPolicyOutputs]: ...
+
+    def spawn_rollout_buffer(
+        self,
+        env_config: EnvConfig,
+        training_config: RNNBasedMetaLearningTrainingConfig,
+        example_state: RNNState,
+        seed: int | None = None,
+    ) -> MultiTaskRolloutBuffer:
+        return MultiTaskRolloutBuffer(
+            num_tasks=training_config.meta_batch_size,
+            num_rollout_steps=training_config.rollouts_per_task
+            * env_config.max_episode_steps,
+            env_obs_space=env_config.observation_space,
+            env_action_space=env_config.action_space,
+            rnn_state_dim=example_state.shape[-1],
+            seed=seed,
+        )
+
+    @abc.abstractmethod
+    def init_recurrent_state(self, batch_size: int) -> tuple[Self, RNNState]: ...
+
+    @override
+    def train(
+        self,
+        config: RNNBasedMetaLearningTrainingConfig,
+        envs: GymVectorEnv,
+        env_config: MetaLearningEnvConfig,
+        run_timestamp: str | None = None,
+        seed: int = 1,
+        track: bool = True,
+        checkpoint_manager: ocp.CheckpointManager | None = None,
+        checkpoint_metadata: CheckpointMetadata | None = None,
+        buffer_checkpoint: ReplayBufferCheckpoint | None = None,
+    ) -> Self:
+        global_episodic_return: Deque[float] = deque([], maxlen=20 * self.num_tasks)
+        global_episodic_length: Deque[int] = deque([], maxlen=20 * self.num_tasks)
+        start_step, episodes_ended = 0, 0
+
+        if checkpoint_metadata is not None:
+            start_step = checkpoint_metadata["step"]
+            episodes_ended = checkpoint_metadata["episodes_ended"]
+
+        _, example_state = self.init_recurrent_state(config.meta_batch_size)
+        rollout_buffer = self.spawn_rollout_buffer(env_config, config, example_state, seed)
+
+        # NOTE: We assume that eval evns are deterministically initialised and there's no state
+        # that needs to be carried over when they're used.
+        eval_envs = env_config.spawn_test(seed)
+
+        start_time = time.time()
+
+        steps_per_iter = (
+            config.meta_batch_size
+            * config.rollouts_per_task
+            * env_config.max_episode_steps
+        )
+
+        for _iter in range(
+            start_step, config.total_steps // steps_per_iter
+        ):  # Outer step
+            global_step = _iter * steps_per_iter
+            print(f"Iteration {_iter}, Global num of steps {global_step}")
+
+            envs.call("sample_tasks")
+            self, states = self.init_recurrent_state(config.meta_batch_size)
+
+            obs, _ = envs.reset()
+            rollout_buffer.reset()
+            episode_started = np.full((envs.num_envs,), 1.0)
+
+            while not rollout_buffer.ready:
+                self, next_states, actions, aux_policy_outs = self.sample_action_and_aux(states, obs)
+
+                next_obs, rewards, terminations, truncations, infos = envs.step(
+                    actions
+                )
+
+                rollout_buffer.add(
+                    obs,
+                    actions,
+                    rewards,
+                    episode_started,
+                    value=aux_policy_outs.get("value"),
+                    log_prob=aux_policy_outs.get("log_prob"),
+                    mean=aux_policy_outs.get("mean"),
+                    std=aux_policy_outs.get("std"),
+                    rnn_state=states,
+                )
+
+                episode_started = np.logical_or(terminations, truncations)
+                obs = next_obs
+                states = next_states
+
+                for i, env_ended in enumerate(episode_started):
+                    if env_ended:
+                        global_episodic_return.append(
+                            infos["final_info"]["episode"]["r"][i]
+                        )
+                        global_episodic_length.append(
+                            infos["final_info"]["episode"]["l"][i]
+                        )
+
+            rollouts = rollout_buffer.get()
+
+            mean_episodic_return = np.mean(list(global_episodic_return))
+            print("- Mean episodic return: ", mean_episodic_return)
+            if track:
+                wandb.log(
+                    {"charts/mean_episodic_returns": mean_episodic_return},
+                    step=global_step,
+                )
+
+            # Outer policy update
+            print("- Computing update")
+            self, logs = self.update(rollouts)
 
             # Evaluation
             if global_step % config.evaluation_frequency == 0 and global_step > 0:

@@ -9,6 +9,7 @@ Action = Float[np.ndarray, "... action_dim"]
 Value = Float[np.ndarray, "... 1"]
 LogProb = Float[np.ndarray, "... 1"]
 Observation = Float[np.ndarray, "... obs_dim"]
+RNNState = Float[np.ndarray, "... rnn_state_dim"]
 LayerActivations = Float[Array, "batch_size layer_dim"]
 
 type LogDict = dict[str, float | Float[Array, ""]]
@@ -37,6 +38,7 @@ class Rollout(NamedTuple):
     means: Float[Action, "timestep task"] | None = None
     stds: Float[Action, "timestep task"] | None = None
     values: Float[np.ndarray, "timestep task 1"] | None = None
+    rnn_states: Float[RNNState, "timestep task"] | None = None
 
     # Computed statistics about observed rewards
     returns: Float[np.ndarray, "timestep task 1"] | None = None
