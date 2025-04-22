@@ -32,11 +32,8 @@ class NeuralNetworkConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RecurrentNeuralNetworkConfig:
-    width: int = 128
+    width: int = 256
     """The dimension of the recurrent layer and the hidden state."""
-
-    depth: int = 1
-    """The number of recurrent layers."""
 
     cell_type: CellType = CellType.GRU
     """The type of recurrent cell to use."""

@@ -98,10 +98,18 @@ class RecurrentContinuousActionPolicy(nn.Module):
             bias_init=self.config.network_config.bias_init,
         )
 
+        head_kernel_init = uniform(1e-3)
+        if self.config.head_kernel_init is not None:
+            head_kernel_init = self.config.head_kernel_init()
+
+        head_bias_init = uniform(1e-3)
+        if self.config.head_bias_init is not None:
+            head_bias_init = self.config.head_bias_init()
+
         _Dense = partial(
             nn.Dense,
-            kernel_init=self.config.network_config.kernel_init,
-            bias_init=self.config.network_config.bias_init,
+            kernel_init=head_kernel_init,
+            bias_init=head_bias_init,
             use_bias=self.config.network_config.use_bias,
         )
         if self.config.std_type == StdType.MLP_HEAD:
