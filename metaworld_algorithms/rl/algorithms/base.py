@@ -540,6 +540,10 @@ class OffPolicyAlgorithm(
     @abc.abstractmethod
     def eval_action(self, observations: Observation) -> Action: ...
 
+    def reset(self, env_mask: npt.NDArray[np.bool_]) -> None:
+        del env_mask
+        pass  # For evaluation interface compatibility
+
     @override
     def train(
         self,
@@ -700,6 +704,10 @@ class OnPolicyAlgorithm(
 
     @abc.abstractmethod
     def eval_action(self, observations: Observation) -> Action: ...
+
+    def reset(self, env_mask: npt.NDArray[np.bool_]) -> None:  # pyright: ignore[reportUnusedParameter]
+        del env_mask
+        pass  # For evaluation interface compatibility
 
     @abc.abstractmethod
     def update(

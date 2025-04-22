@@ -227,6 +227,10 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             self._current_agent = self._agent.init_ensemble_networks()
             self._buffer = []
 
+        def reset(self, env_mask: npt.NDArray[np.bool_]) -> None:
+            del env_mask
+            pass  # For evaluation interface compatibility
+
         def adapt_action(
             self, observations: npt.NDArray[np.float64]
         ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]:
