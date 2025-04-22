@@ -51,6 +51,11 @@ class TrainState(FlaxTrainState):
         )
 
 
+class RNNTrainState(TrainState):
+    seq_apply_fn: Callable = struct.field(pytree_node=False)
+    init_carry_fn: Callable = struct.field(pytree_node=False)
+
+
 class MetaTrainState(TrainState):
     inner_train_state: TrainState
     expand_params: Callable = struct.field(pytree_node=False)
@@ -273,6 +278,22 @@ def swap_rollout_axes(rollout: Rollout, axis1: int, axis2: int) -> Rollout:
     return Rollout(
         *map(
             lambda x: x.swapaxes(axis1, axis2) if x is not None else None,
+            rollout,
+        )  # pyright: ignore[reportArgumentType]
+    )
+
+
+def to_episode_batch(rollout: Rollout, episode_length: int) -> Rollout:
+    def _reshape(x: npt.NDArray) -> npt.NDArray:
+        # Starting shape: (timestep, task, ...)
+        x = x.swapaxes(0, 1)  # (task, timestep, ...)
+        x = x.reshape(x.shape[0], -1, episode_length, x.shape[-1])  # (task, episode, timestep, ...)
+        x = x.reshape(-1, episode_length, x.shape[-1]) # (episode, timestep, ...)
+        return x
+
+    return Rollout(
+        *map(
+            lambda x: _reshape(x) if x is not None else None,
             rollout,
         )  # pyright: ignore[reportArgumentType]
     )

@@ -33,9 +33,10 @@ class Activation(enum.Enum):
     SiLU = enum.member(jax.nn.silu)
     GELU = enum.member(jax.nn.gelu)
     GLU = enum.member(jax.nn.glu)
+    Identity = enum.member(lambda x: x)
 
-    def __call__(self, *args):
-        return self.value(*args)
+    def __call__(self, *args, **kwargs):
+        return self.value(*args, **kwargs)
 
 
 class Optimizer(enum.Enum):
@@ -47,6 +48,16 @@ class Optimizer(enum.Enum):
     def __call__(self, learning_rate: float, **kwargs):
         return self.value(learning_rate, **kwargs)
 
+
 class StdType(enum.Enum):
     MLP_HEAD = enum.auto()
     PARAM = enum.auto()
+
+
+class CellType(enum.Enum):
+    RNN = enum.member(flax.linen.RNNCellBase)
+    LSTM = enum.member(flax.linen.OptimizedLSTMCell)
+    GRU = enum.member(flax.linen.GRUCell)
+
+    def __call__(self, *args, **kwargs):
+        return self.value(*args, **kwargs)

@@ -27,7 +27,6 @@ from metaworld_algorithms.rl.buffers import (
 )
 from metaworld_algorithms.types import (
     Action,
-    Agent,
     AuxPolicyOutputs,
     CheckpointMetadata,
     GymVectorEnv,
@@ -51,7 +50,6 @@ DataType = TypeVar("DataType", ReplayBufferSamples, Rollout, list[Rollout])
 
 class Algorithm(
     abc.ABC,
-    Agent,
     Generic[AlgorithmConfigType, TrainingConfigType, EnvConfigType, DataType],
     struct.PyTreeNode,
 ):
@@ -68,12 +66,6 @@ class Algorithm(
 
     @abc.abstractmethod
     def get_num_params(self) -> dict[str, int]: ...
-
-    @abc.abstractmethod
-    def sample_action(self, observation: Observation) -> tuple[Self, Action]: ...
-
-    @abc.abstractmethod
-    def eval_action(self, observations: Observation) -> Action: ...
 
     @abc.abstractmethod
     def train(
@@ -210,7 +202,7 @@ class GradientBasedMetaLearningAlgorithm(
                 print(f"- Collecting inner step {_step}")
                 obs, _ = envs.reset()
                 rollout_buffer.reset()
-                episode_started = np.full((envs.num_envs,), 1.0)
+                episode_started = np.ones((envs.num_envs,))
 
                 while not rollout_buffer.ready:
                     self, actions, aux_policy_outs = self.sample_action_and_aux(obs)
@@ -329,7 +321,6 @@ class GradientBasedMetaLearningAlgorithm(
         return self
 
 
-
 class RNNBasedMetaLearningAlgorithm(
     MetaLearningAlgorithm[
         AlgorithmConfigType, RNNBasedMetaLearningTrainingConfig, Rollout
@@ -361,6 +352,11 @@ class RNNBasedMetaLearningAlgorithm(
     @abc.abstractmethod
     def init_recurrent_state(self, batch_size: int) -> tuple[Self, RNNState]: ...
 
+    @abc.abstractmethod
+    def reset_recurrent_state(
+        self, current_state: RNNState, reset_mask: npt.NDArray[np.bool_]
+    ) -> tuple[Self, RNNState]: ...
+
     @override
     def train(
         self,
@@ -383,7 +379,9 @@ class RNNBasedMetaLearningAlgorithm(
             episodes_ended = checkpoint_metadata["episodes_ended"]
 
         _, example_state = self.init_recurrent_state(config.meta_batch_size)
-        rollout_buffer = self.spawn_rollout_buffer(env_config, config, example_state, seed)
+        rollout_buffer = self.spawn_rollout_buffer(
+            env_config, config, example_state, seed
+        )
 
         # NOTE: We assume that eval evns are deterministically initialised and there's no state
         # that needs to be carried over when they're used.
@@ -408,14 +406,14 @@ class RNNBasedMetaLearningAlgorithm(
 
             obs, _ = envs.reset()
             rollout_buffer.reset()
-            episode_started = np.full((envs.num_envs,), 1.0)
+            episode_started = np.ones((envs.num_envs,))
 
             while not rollout_buffer.ready:
-                self, next_states, actions, aux_policy_outs = self.sample_action_and_aux(states, obs)
-
-                next_obs, rewards, terminations, truncations, infos = envs.step(
-                    actions
+                self, next_states, actions, aux_policy_outs = (
+                    self.sample_action_and_aux(states, obs)
                 )
+
+                next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
                 rollout_buffer.add(
                     obs,
@@ -431,7 +429,7 @@ class RNNBasedMetaLearningAlgorithm(
 
                 episode_started = np.logical_or(terminations, truncations)
                 obs = next_obs
-                states = next_states
+                self, states = self.reset_recurrent_state(next_states, episode_started)
 
                 for i, env_ended in enumerate(episode_started):
                     if env_ended:
@@ -536,6 +534,12 @@ class OffPolicyAlgorithm(
     @abc.abstractmethod
     def update(self, data: ReplayBufferSamples) -> tuple[Self, LogDict]: ...
 
+    @abc.abstractmethod
+    def sample_action(self, observation: Observation) -> tuple[Self, Action]: ...
+
+    @abc.abstractmethod
+    def eval_action(self, observations: Observation) -> Action: ...
+
     @override
     def train(
         self,
@@ -580,7 +584,9 @@ class OffPolicyAlgorithm(
 
             buffer_obs = next_obs
             if "final_obs" in infos:
-                buffer_obs = np.where(done[:, None], np.stack(infos["final_obs"]), next_obs)
+                buffer_obs = np.where(
+                    done[:, None], np.stack(infos["final_obs"]), next_obs
+                )
             replay_buffer.add(obs, buffer_obs, actions, rewards, done)
 
             obs = next_obs
@@ -690,6 +696,12 @@ class OnPolicyAlgorithm(
     ) -> tuple[Self, Action, AuxPolicyOutputs]: ...
 
     @abc.abstractmethod
+    def sample_action(self, observation: Observation) -> tuple[Self, Action]: ...
+
+    @abc.abstractmethod
+    def eval_action(self, observations: Observation) -> Action: ...
+
+    @abc.abstractmethod
     def update(
         self,
         data: Rollout,
@@ -729,7 +741,7 @@ class OnPolicyAlgorithm(
 
         obs, _ = envs.reset()
 
-        episode_started = np.full((envs.num_envs,), 1.0)
+        episode_started = np.ones((envs.num_envs,))
         start_step, episodes_ended = 0, 0
 
         if checkpoint_metadata is not None:
@@ -859,6 +871,6 @@ class OnPolicyAlgorithm(
 
                     # Reset envs again to exit eval mode
                     obs, _ = envs.reset()
-                    episode_started = np.full((envs.num_envs,), 1.0)
+                    episode_started = np.ones((envs.num_envs,))
 
         return self

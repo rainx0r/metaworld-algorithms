@@ -10,6 +10,7 @@ from jaxtyping import PRNGKeyArray
 from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
     QValueFunctionConfig,
+    RecurrentContinuousActionPolicyConfig,
     ValueFunctionConfig,
 )
 from metaworld_algorithms.config.utils import StdType
@@ -79,6 +80,74 @@ class ContinuousActionPolicy(nn.Module):
         if self.config.squash_tanh:
             return TanhMultivariateNormalDiag(loc=mean, scale_diag=std)
         return distrax.MultivariateNormalDiag(loc=mean, scale_diag=std)
+
+
+class RecurrentContinuousActionPolicy(nn.Module):
+    """A Flax module representing the policy network for continous action spaces."""
+
+    action_dim: int
+    config: RecurrentContinuousActionPolicyConfig
+
+    def setup(self) -> None:
+        # TODO: abstract this into a nn module?
+        # Might be useful so we can support transformers instead etc
+        self.cell: nn.RNNCellBase = self.config.network_config.cell_type(
+            features=self.config.network_config.width,
+            kernel_init=self.config.network_config.kernel_init,
+            recurrent_kernel_init=self.config.network_config.recurrent_kernel_init,
+            bias_init=self.config.network_config.bias_init,
+        )
+
+        _Dense = partial(
+            nn.Dense,
+            kernel_init=self.config.network_config.kernel_init,
+            bias_init=self.config.network_config.bias_init,
+            use_bias=self.config.network_config.use_bias,
+        )
+        if self.config.std_type == StdType.MLP_HEAD:
+            self.head = _Dense(self.action_dim * 2)
+        elif self.config.std_type == StdType.PARAM:
+            self.head = _Dense(self.action_dim)
+            self.log_std = self.param(  # init std to 1
+                "log_std", nn.initializers.zeros_init(), (self.action_dim,)
+            )
+        else:
+            raise ValueError("Invalid std_type: %s" % self.config.std_type)
+
+    def _process_head(self, x: jax.Array) -> distrax.Distribution:
+        if self.config.std_type == StdType.MLP_HEAD:
+            mean, log_std = jnp.split(x, 2, axis=-1)
+        elif self.config.std_type == StdType.PARAM:
+            mean = x
+            log_std = jnp.broadcast_to(self.log_std, mean.shape)
+        else:
+            raise ValueError("Invalid std_type: %s" % self.config.std_type)
+
+        log_std = jnp.clip(
+            log_std, min=self.config.log_std_min, max=self.config.log_std_max
+        )
+        std = jnp.exp(log_std)
+
+        if self.config.squash_tanh:
+            return TanhMultivariateNormalDiag(loc=mean, scale_diag=std)
+        return distrax.MultivariateNormalDiag(loc=mean, scale_diag=std)
+
+    def initialize_carry(self, batch_size: int, key: PRNGKeyArray) -> jax.Array:
+        return self.cell.initialize_carry(key, (batch_size,))
+
+    def __call__(
+        self, carry: jax.Array, x: jax.Array
+    ) -> tuple[jax.Array, distrax.Distribution]:
+        carry, x = self._get_cell()(carry, x)
+        x = self.head(x)
+        return carry, self._process_head(x)
+
+    def rollout(
+        self, x: jax.Array, initial_carry: jax.Array | None = None
+    ) -> distrax.Distribution:
+        x = nn.RNN(self.cell)(x, time_major=True, initial_carry=initial_carry)  # pyright: ignore[reportAssignmentType]
+        x = self.head(x)
+        return self._process_head(x)
 
 
 class QValueFunction(nn.Module):

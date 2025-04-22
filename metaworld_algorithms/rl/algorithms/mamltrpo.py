@@ -201,14 +201,12 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
             {"log_prob": log_prob, "mean": mean, "std": std},
         )
 
-    @override
     def sample_action(self, observation: Observation) -> tuple[Self, Action]:
         action, key = _sample_action(
             self.policy.inner_train_state, observation, self.key
         )
         return self.replace(key=key), jax.device_get(action)
 
-    @override
     def eval_action(self, observations: Observation) -> Action:
         return jax.device_get(_eval_action(self.policy.inner_train_state, observations))
 
@@ -262,7 +260,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         rollouts: Rollout,
     ) -> Rollout:
         # NOTE: assume the final states are terminal
-        dones = np.full(rollouts.rewards.shape[1:], 1.0, dtype=rollouts.rewards.dtype)
+        dones = np.ones(rollouts.rewards.shape[1:], dtype=rollouts.rewards.dtype)
         values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
             rollouts, self.gamma
         )
