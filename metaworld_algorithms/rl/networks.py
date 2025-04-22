@@ -153,7 +153,7 @@ class RecurrentContinuousActionPolicy(nn.Module):
     def rollout(
         self, x: jax.Array, initial_carry: jax.Array | None = None
     ) -> distrax.Distribution:
-        x = nn.RNN(self.cell)(x, time_major=True, initial_carry=initial_carry)  # pyright: ignore[reportAssignmentType]
+        x = nn.RNN(self.cell)(x, initial_carry=initial_carry)  # pyright: ignore[reportAssignmentType]
         x = self.head(x)
         return self._process_head(x)
 
