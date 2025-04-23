@@ -215,6 +215,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             total_tasks_per_cls=self.total_goals_per_task_train,
             reward_function_version=self.reward_func_version,
             recurrent_info_in_obs=self.recurrent_info_in_obs,
+            reward_normalization_method=self.reward_normalization_method,
         )
         if self.env_name:
             kwargs["env_name"] = self.env_name
@@ -234,6 +235,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             total_tasks_per_cls=self.total_goals_per_task_test,
             reward_function_version=self.reward_func_version,
             recurrent_info_in_obs=self.recurrent_info_in_obs,
+            reward_normalization_method=self.reward_normalization_method,
         )
         if self.env_name:
             kwargs["env_name"] = self.env_name
