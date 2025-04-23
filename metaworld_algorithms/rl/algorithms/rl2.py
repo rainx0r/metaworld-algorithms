@@ -229,10 +229,10 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
 
         def __init__(self, agent: "RL2"):
             self._agent = agent
+            self._current_agent = self._agent
 
         def init(self) -> None:
-            self._current_agent = self._agent
-            self._current_agent, self._current_state = self._agent.init_recurrent_state(
+            self._current_agent, self._current_state = self._current_agent.init_recurrent_state(
                 self._agent.num_tasks
             )
 
@@ -240,7 +240,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             self, observations: npt.NDArray[np.float64]
         ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]:
             self._current_agent, self._current_state, action, aux_policy_outs = (
-                self._agent.sample_action_and_aux(self._current_state, observations)
+                self._current_agent.sample_action_and_aux(self._current_state, observations)
             )
             return action, aux_policy_outs
 

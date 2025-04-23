@@ -403,7 +403,6 @@ class RNNBasedMetaLearningAlgorithm(
 
             envs.call("sample_tasks")
             self, states = self.init_recurrent_state(config.meta_batch_size)
-
             obs, _ = envs.reset()
             rollout_buffer.reset()
             episode_started = np.ones((envs.num_envs,))
@@ -429,7 +428,7 @@ class RNNBasedMetaLearningAlgorithm(
 
                 episode_started = np.logical_or(terminations, truncations)
                 obs = next_obs
-                self, states = self.reset_recurrent_state(next_states, episode_started)
+                states = next_states
 
                 for i, env_ended in enumerate(episode_started):
                     if env_ended:
