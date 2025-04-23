@@ -22,11 +22,15 @@ from metaworld_algorithms.config.rl import (
     OffPolicyTrainingConfig,
     TrainingConfig,
 )
-from metaworld_algorithms.config.envs import EnvConfig
+from metaworld_algorithms.config.envs import EnvConfig, MetaLearningEnvConfig
 from metaworld_algorithms.rl.algorithms import (
     Algorithm,
     OffPolicyAlgorithm,
     get_algorithm_for_config,
+)
+from metaworld_algorithms.rl.algorithms.base import (
+    MetaLearningAlgorithm,
+    OnPolicyAlgorithm,
 )
 from metaworld_algorithms.types import CheckpointMetadata
 
@@ -185,9 +189,20 @@ class Run:
 
         # Cleanup
         if self.checkpoint:
-            mean_success_rate, mean_returns, mean_success_per_task = self.env.evaluate(
-                envs, agent
-            )
+            if isinstance(
+                agent, (OnPolicyAlgorithm, OffPolicyAlgorithm)
+            ) and not isinstance(self.env, MetaLearningEnvConfig):
+                mean_success_rate, mean_returns, mean_success_per_task = (
+                    self.env.evaluate(envs, agent)
+                )
+            elif isinstance(agent, MetaLearningAlgorithm) and isinstance(
+                self.env, MetaLearningEnvConfig
+            ):
+                mean_success_rate, mean_returns, mean_success_per_task = (
+                    self.env.evaluate_metalearning(envs, agent.wrap())
+                )
+            else:
+                raise ValueError("Invalid agent / env combination.")
             final_metrics = {
                 "mean_success_rate": float(mean_success_rate),
                 "mean_evaluation_return": float(mean_returns),
