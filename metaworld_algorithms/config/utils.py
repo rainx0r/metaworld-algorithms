@@ -20,8 +20,8 @@ class Initializer(enum.Enum):
     CONSTANT = enum.member(jax.nn.initializers.constant)
     UNIFORM = enum.member(_uniform_init)
 
-    def __call__(self, *args):
-        return self.value(*args)
+    def __call__(self, *args, **kwargs):
+        return self.value(*args, **kwargs)
 
 
 class Activation(enum.Enum):

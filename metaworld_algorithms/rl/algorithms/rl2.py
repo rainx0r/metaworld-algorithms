@@ -1,5 +1,6 @@
 import dataclasses
 import itertools
+from functools import partial
 from typing import Self, override
 
 import distrax
@@ -148,12 +149,13 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
                 for _ in range(config.meta_batch_size)
             ]
         )
+        dummy_carry = policy_net.initialize_carry(config.meta_batch_size, policy_key)
 
         policy = RNNTrainState.create(
-            params=policy_net.init_single(policy_key, dummy_obs),
+            params=policy_net.init(policy_key, dummy_carry, dummy_obs),
             tx=config.policy_config.network_config.optimizer.spawn(),
             apply_fn=policy_net.apply,
-            seq_apply_fn=policy_net.rollout,
+            seq_apply_fn=partial(policy_net.apply, method=policy_net.rollout),
             init_carry_fn=policy_net.initialize_carry,
         )
 
@@ -189,7 +191,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         self, current_state: RNNState, reset_mask: npt.NDArray[np.bool_]
     ) -> tuple[Self, RNNState]:
         self, new_state = self.init_recurrent_state(current_state.shape[0])
-        return self, np.where(reset_mask, new_state, current_state)
+        return self, np.where(reset_mask[..., None], new_state, current_state)
 
     def sample_action_and_aux(
         self, state: RNNState, observation: Observation
@@ -250,7 +252,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
 
         def reset(self, env_mask: npt.NDArray[np.bool_]) -> None:
             self._current_state = jnp.where(  # pyright: ignore[reportAttributeAccessIssue]
-                env_mask, self._adapted_state, self._current_state
+                env_mask[..., None], self._adapted_state, self._current_state
             )
 
         def eval_action(

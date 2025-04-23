@@ -88,15 +88,20 @@ class RecurrentContinuousActionPolicy(nn.Module):
     action_dim: int
     config: RecurrentContinuousActionPolicyConfig
 
+    def _get_cell(self, **kwargs) -> nn.RNNCellBase:
+        return self.config.network_config.cell_type(
+            features=self.config.network_config.width,
+            kernel_init=self.config.network_config.kernel_init(),
+            recurrent_kernel_init=self.config.network_config.recurrent_kernel_init(),
+            bias_init=self.config.network_config.bias_init(),
+            **kwargs,
+        )
+
     def setup(self) -> None:
         # TODO: abstract this into a nn module?
         # Might be useful so we can support transformers instead etc
-        self.cell: nn.RNNCellBase = self.config.network_config.cell_type(
-            features=self.config.network_config.width,
-            kernel_init=self.config.network_config.kernel_init,
-            recurrent_kernel_init=self.config.network_config.recurrent_kernel_init,
-            bias_init=self.config.network_config.bias_init,
-        )
+        self.cell: nn.RNNCellBase = self._get_cell()
+        self.rnn = nn.RNN(self.cell)
 
         head_kernel_init = uniform(1e-3)
         if self.config.head_kernel_init is not None:
@@ -141,19 +146,22 @@ class RecurrentContinuousActionPolicy(nn.Module):
         return distrax.MultivariateNormalDiag(loc=mean, scale_diag=std)
 
     def initialize_carry(self, batch_size: int, key: PRNGKeyArray) -> jax.Array:
-        return self.cell.initialize_carry(key, (batch_size,))
+        # NOTE: Second dim doesn't matter in initialize_carry
+        return self._get_cell(parent=None).initialize_carry(key, (batch_size, 1))
 
     def __call__(
         self, carry: jax.Array, x: jax.Array
     ) -> tuple[jax.Array, distrax.Distribution]:
-        carry, x = self._get_cell()(carry, x)
+        carry, x = self.cell(carry, x)
         x = self.head(x)
         return carry, self._process_head(x)
 
     def rollout(
-        self, x: jax.Array, initial_carry: jax.Array | None = None
+        self,
+        x: jax.Array,
+        initial_carry: jax.Array | None = None,
     ) -> distrax.Distribution:
-        x = nn.RNN(self.cell)(x, initial_carry=initial_carry)  # pyright: ignore[reportAssignmentType]
+        x = self.rnn(x, initial_carry=initial_carry)  # pyright: ignore[reportAssignmentType]
         x = self.head(x)
         return self._process_head(x)
 
