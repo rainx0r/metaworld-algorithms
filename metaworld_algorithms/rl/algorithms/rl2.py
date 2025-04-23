@@ -24,8 +24,8 @@ from metaworld_algorithms.rl.algorithms.utils import (
     RNNTrainState,
     compute_gae,
     normalize_advantages,
-    to_episode_batch,
     to_minibatch_iterator,
+    to_padded_episode_batch,
 )
 from metaworld_algorithms.rl.networks import RecurrentContinuousActionPolicy
 from metaworld_algorithms.types import (
@@ -232,15 +232,17 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             self._current_agent = self._agent
 
         def init(self) -> None:
-            self._current_agent, self._current_state = self._current_agent.init_recurrent_state(
-                self._agent.num_tasks
+            self._current_agent, self._current_state = (
+                self._current_agent.init_recurrent_state(self._agent.num_tasks)
             )
 
         def adapt_action(
             self, observations: npt.NDArray[np.float64]
         ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]:
             self._current_agent, self._current_state, action, aux_policy_outs = (
-                self._current_agent.sample_action_and_aux(self._current_state, observations)
+                self._current_agent.sample_action_and_aux(
+                    self._current_state, observations
+                )
             )
             return action, aux_policy_outs
 
@@ -299,6 +301,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             assert data.log_probs is not None
             assert data.advantages is not None
             assert data.rnn_states is not None
+            assert data.valids is not None
 
             action_dist = self.policy.seq_apply_fn(
                 params, data.observations, initial_carry=data.rnn_states[0]
@@ -318,9 +321,12 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
                 ratio, 1 - self.clip_eps, 1 + self.clip_eps
             )
             pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
+            pg_loss = jnp.where(data.valids, pg_loss, 0.0)
 
             # TODO: Support entropy estimate using log probs
+            # also maybe support garage-style entropy term
             entropy_loss = action_dist.entropy().mean()
+            entropy_loss = jnp.where(data.valids, entropy_loss, 0.0)
 
             return pg_loss - self.entropy_coefficient * entropy_loss, {
                 "losses/entropy_loss": entropy_loss,
@@ -346,9 +352,8 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         # NOTE: We assume that during training all episodes have the same length
         # This should be the case for Metaworld.
         data = self.compute_advantages(data)  # (rollout_timestep, task, ...)
-        # TODO: get the horizon from somewhere?
-        # or better yet switch to properly padded data with masking
-        data = to_episode_batch(data, 500)  # (episode, ep_timestep, ...)
+        data = to_padded_episode_batch(data)  # (episode, ep_timestep, ...)
+        breakpoint()
 
         # NOTE: Minibatch over rollouts
         # Pick random rollouts from the data for each minibatch, but use the whole episode

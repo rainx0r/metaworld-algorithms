@@ -283,12 +283,50 @@ def swap_rollout_axes(rollout: Rollout, axis1: int, axis2: int) -> Rollout:
     )
 
 
+def to_padded_episode_batch(rollout: Rollout) -> Rollout:
+    N = rollout.observations.shape[1]  # (:, task, ...)
+    rollout = swap_rollout_axes(rollout, 0, 1)  # (task, timestep, ...)
+    sequences = {
+        field: [] for field in rollout._fields if getattr(rollout, field) is not None
+    }
+    episode_starts = rollout.dones.squeeze()
+    episode_lengths = []
+
+    for task in range(N):
+        boundaries = np.argwhere(episode_starts[task]).squeeze()[1:]
+        episode_lengths.append(boundaries[0])
+        episode_lengths += list(np.diff(boundaries))
+        for field in rollout._fields:
+            if (field_data := getattr(rollout, field)) is not None:
+                sequences[field] += np.array_split(field_data, boundaries)
+
+    max_episode_length = max(episode_lengths)
+    valids = np.ones((len(episode_lengths), max_episode_length))
+    for field in sequences:
+        for i, sequence in enumerate(sequences[field]):
+            seq_len = len(sequence)
+            sequences[field][i] = np.pad(
+                sequence,
+                ((0, max_episode_length - seq_len), (0, 0)),
+                mode="constant",
+                constant_values=0,
+            )
+            valids[i, seq_len:] = 0
+
+    sequences = {field: np.stack(sequences[field]) for field in sequences}
+    rollout = Rollout(**sequences)
+    rollout = rollout._replace(valids=valids.reshape(rollout.rewards.shape))
+    return rollout
+
+
 def to_episode_batch(rollout: Rollout, episode_length: int) -> Rollout:
     def _reshape(x: npt.NDArray) -> npt.NDArray:
         # Starting shape: (timestep, task, ...)
         x = x.swapaxes(0, 1)  # (task, timestep, ...)
-        x = x.reshape(x.shape[0], -1, episode_length, x.shape[-1])  # (task, episode, timestep, ...)
-        x = x.reshape(-1, episode_length, x.shape[-1]) # (episode, timestep, ...)
+        x = x.reshape(
+            x.shape[0], -1, episode_length, x.shape[-1]
+        )  # (task, episode, timestep, ...)
+        x = x.reshape(-1, episode_length, x.shape[-1])  # (episode, timestep, ...)
         return x
 
     return Rollout(

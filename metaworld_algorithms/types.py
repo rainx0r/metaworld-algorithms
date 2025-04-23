@@ -43,6 +43,7 @@ class Rollout(NamedTuple):
     # Computed statistics about observed rewards
     returns: Float[np.ndarray, "timestep task 1"] | None = None
     advantages: Float[np.ndarray, "timestep task 1"] | None = None
+    valids: Float[np.ndarray, "episode timestep 1"] | None = None
 
     @classmethod
     def from_list(cls, items: list) -> "Rollout":

@@ -30,7 +30,7 @@ def test_minibatch_iterator():
     previous_minibatch_rewards = None
 
     # Run the test
-    for epoch in range(num_epochs):
+    for _ in range(num_epochs):
         for minibatch in itertools.islice(iterator, num_minibatches):
             # Check alignment
             for j in range(minibatch.observations.shape[0]):
