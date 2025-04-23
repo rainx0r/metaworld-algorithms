@@ -42,6 +42,7 @@ def main() -> None:
         env=MetaworldMetaLearningConfig(
             env_id="ML10",
             meta_batch_size=meta_batch_size,
+            recurrent_info_in_obs=True,
         ),
         algorithm=RL2Config(
             num_tasks=meta_batch_size,
