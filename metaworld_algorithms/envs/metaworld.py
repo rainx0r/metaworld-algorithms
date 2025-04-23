@@ -110,6 +110,7 @@ class MetaworldConfig(EnvConfig):
             seed=seed,
             use_one_hot=self.use_one_hot,
             terminate_on_success=self.terminate_on_success,
+            max_episode_steps=self.max_episode_steps,
             vector_strategy="async",
             reward_function_version=self.reward_func_version,
             num_goals=self.num_goals,
@@ -140,10 +141,10 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             assert isinstance(original_obs_space, gym.spaces.Box)
             return gym.spaces.Box(
                 np.concatenate(
-                    [original_obs_space.low, self.action_space.low, -np.inf, 0.0]
+                    [original_obs_space.low, self.action_space.low, [-np.inf], [0.0]]
                 ),
                 np.concatenate(
-                    [original_obs_space.high, self.action_space.high, np.inf, 1.0]
+                    [original_obs_space.high, self.action_space.high, [np.inf], [1.0]]
                 ),
                 dtype=np.float64,
             )
@@ -209,6 +210,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             seed=seed,
             terminate_on_success=self.terminate_on_success,
             vector_strategy="async",
+            max_episode_steps=self.max_episode_steps,
             meta_batch_size=self.meta_batch_size,
             total_tasks_per_cls=self.total_goals_per_task_train,
             reward_function_version=self.reward_func_version,
@@ -227,6 +229,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             seed=seed,
             terminate_on_success=True,
             vector_strategy="async",
+            max_episode_steps=self.max_episode_steps,
             meta_batch_size=self.meta_batch_size,
             total_tasks_per_cls=self.total_goals_per_task_test,
             reward_function_version=self.reward_func_version,

@@ -11,7 +11,7 @@ from metaworld_algorithms.types import Agent, GymVectorEnv, MetaLearningAgent
 class EnvConfig(abc.ABC):
     env_id: str
     use_one_hot: bool = True
-    max_episode_steps: int = 500
+    max_episode_steps: int | None = None
     evaluation_num_episodes: int = 50
     terminate_on_success: bool = False
 
