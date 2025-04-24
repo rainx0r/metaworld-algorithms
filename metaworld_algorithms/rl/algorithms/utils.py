@@ -62,15 +62,17 @@ class MetaTrainState(TrainState):
 
 
 def to_minibatch_iterator(
-    data: Rollout, num: int, seed: int
+    data: Rollout, num: int, seed: int, flatten_batch_dims: bool = True
 ) -> Generator[Rollout, None, Never]:
     # Flatten batch dims
-    rollouts = Rollout(
-        *map(
-            lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
-            data,
-        )  # pyright: ignore[reportArgumentType]
-    )
+    rollouts = data
+    if flatten_batch_dims:
+        rollouts = Rollout(
+            *map(
+                lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
+                data,
+            )  # pyright: ignore[reportArgumentType]
+        )
 
     rollout_size = rollouts.observations.shape[0]
     minibatch_size = rollout_size // num
@@ -82,7 +84,7 @@ def to_minibatch_iterator(
         for field in rollouts:
             rng.bit_generator.state = rng_state
             if field is not None:
-                rng.shuffle(field)
+                rng.shuffle(field, axis=0)
         rng_state = rng.bit_generator.state
         for start in range(0, rollout_size, minibatch_size):
             end = start + minibatch_size
@@ -293,15 +295,22 @@ def to_padded_episode_batch(rollout: Rollout) -> Rollout:
     episode_lengths = []
 
     for task in range(N):
-        boundaries = np.argwhere(episode_starts[task]).squeeze()[1:]
-        episode_lengths.append(boundaries[0])
-        episode_lengths += list(np.diff(boundaries))
-        for field in rollout._fields:
-            if (field_data := getattr(rollout, field)) is not None:
-                sequences[field] += np.array_split(field_data, boundaries)
+        boundaries = np.argwhere(episode_starts[task]).squeeze()
+        if boundaries.ndim == 0:
+            # Single episode
+            episode_lengths.append(len(episode_starts[task]))
+            for field in rollout._fields:
+                if (field_data := getattr(rollout, field)) is not None:
+                    sequences[field].append(field_data[task])
+        else:
+            episode_lengths.append(boundaries[0])
+            episode_lengths += list(np.diff(boundaries))
+            for field in rollout._fields:
+                if (field_data := getattr(rollout, field)) is not None:
+                    sequences[field] += np.array_split(field_data[task], boundaries)
 
     max_episode_length = max(episode_lengths)
-    valids = np.ones((len(episode_lengths), max_episode_length))
+    valids = np.ones((len(episode_lengths), max_episode_length), dtype=np.bool_)
     for field in sequences:
         for i, sequence in enumerate(sequences[field]):
             seq_len = len(sequence)
@@ -311,7 +320,7 @@ def to_padded_episode_batch(rollout: Rollout) -> Rollout:
                 mode="constant",
                 constant_values=0,
             )
-            valids[i, seq_len:] = 0
+            valids[i, seq_len:] = False
 
     sequences = {field: np.stack(sequences[field]) for field in sequences}
     rollout = Rollout(**sequences)

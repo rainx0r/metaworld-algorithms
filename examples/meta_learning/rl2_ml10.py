@@ -43,6 +43,8 @@ def main() -> None:
             env_id="ML10",
             meta_batch_size=meta_batch_size,
             recurrent_info_in_obs=True,
+            max_episode_steps=250,
+            # reward_normalization_method="exponential",
         ),
         algorithm=RL2Config(
             num_tasks=meta_batch_size,
@@ -66,6 +68,10 @@ def main() -> None:
                 head_kernel_init=Initializer.XAVIER_UNIFORM,
                 head_bias_init=Initializer.ZEROS,
             ),
+            entropy_coefficient=0.0,
+            normalize_advantages=False,
+            num_gradient_steps=5,
+            num_epochs=16,
         ),
         training_config=GradientBasedMetaLearningTrainingConfig(
             meta_batch_size=meta_batch_size,

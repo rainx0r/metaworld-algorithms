@@ -99,9 +99,9 @@ class RL2Config(AlgorithmConfig):
     clip_eps: float = 0.2
     entropy_coefficient: float = 5e-3
     normalize_advantages: bool = True
-    gae_lambda: float = 0.97
-    num_gradient_steps: int = 20
-    num_epochs: int = 16
+    gae_lambda: float = 0.95
+    num_gradient_steps: int = 1
+    num_epochs: int = 10
     target_kl: float | None = None
 
 
@@ -304,7 +304,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             assert data.valids is not None
 
             action_dist = self.policy.seq_apply_fn(
-                params, data.observations, initial_carry=data.rnn_states[0]
+                params, data.observations, initial_carry=data.rnn_states[..., 0, :]
             )
             new_log_probs = action_dist.log_prob(data.actions)  # pyright: ignore[reportAssignmentType]
             log_ratio = new_log_probs.reshape(data.log_probs.shape) - data.log_probs
@@ -316,17 +316,20 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
                 (jnp.abs(ratio - 1.0) > self.clip_eps).mean()
             )
 
+            zero_loss = jnp.zeros_like(data.advantages)
+
             pg_loss1 = -data.advantages * ratio
             pg_loss2 = -data.advantages * jnp.clip(
                 ratio, 1 - self.clip_eps, 1 + self.clip_eps
             )
-            pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
-            pg_loss = jnp.where(data.valids, pg_loss, 0.0)
+            pg_loss = jnp.maximum(pg_loss1, pg_loss2)
+            pg_loss = jnp.where(data.valids, pg_loss, zero_loss).mean()
 
             # TODO: Support entropy estimate using log probs
             # also maybe support garage-style entropy term
-            entropy_loss = action_dist.entropy().mean()
-            entropy_loss = jnp.where(data.valids, entropy_loss, 0.0)
+            entropy_loss = action_dist.entropy()
+            entropy_loss = jnp.expand_dims(entropy_loss, -1)
+            entropy_loss = jnp.where(data.valids, entropy_loss, zero_loss).mean()
 
             return pg_loss - self.entropy_coefficient * entropy_loss, {
                 "losses/entropy_loss": entropy_loss,
@@ -353,7 +356,6 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         # This should be the case for Metaworld.
         data = self.compute_advantages(data)  # (rollout_timestep, task, ...)
         data = to_padded_episode_batch(data)  # (episode, ep_timestep, ...)
-        breakpoint()
 
         # NOTE: Minibatch over rollouts
         # Pick random rollouts from the data for each minibatch, but use the whole episode
@@ -363,7 +365,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             minibatch_iterator_key, (), minval=0, maxval=jnp.iinfo(jnp.int32).max
         ).item()
         minibatch_iterator = to_minibatch_iterator(
-            data, self.num_gradient_steps, int(seed)
+            data, self.num_gradient_steps, int(seed), flatten_batch_dims=False
         )
 
         logs = {}
