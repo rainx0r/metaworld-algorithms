@@ -19,15 +19,18 @@ class MetaworldConfig(EnvConfig):
     reward_normalization_method: str | None = None
     env_name: str | None = None
 
-    @cached_property
-    @override
-    def action_space(self) -> gym.Space:
-        return gym.spaces.Box(
-            np.array([-1, -1, -1, -1], dtype=np.float32),
-            np.array([+1, +1, +1, +1], dtype=np.float32),
-        )
+    #@cached_property
+    #@property
+    #@override
+    #def action_space(self) -> gym.Space:
+    #    return gym.spaces.Box(
+    #        np.array([-1, -1, -1, -1], dtype=np.float32),
+    #        np.array([+1, +1, +1, +1], dtype=np.float32),
+    #    )
 
-    @cached_property
+
+    '''@cached_property
+    #@property
     @override
     def observation_space(self) -> gym.Space:
         _HAND_SPACE = gym.spaces.Box(
@@ -96,6 +99,7 @@ class MetaworldConfig(EnvConfig):
             )
 
         return env_obs_space
+    '''
 
     @override
     def evaluate(
@@ -137,8 +141,6 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         # but, because of `Rollout` being a local class, the type checker can't fully certify that
         # We could just use Metaworld's types throughout the project, but
         # I kind of don't want to rely on `from metaworld` imports outside this file.
-
-        print(self.env_id)
 
         if self.env_id == "ML10" or self.env_id == "ML45":
             num_classes = 5

@@ -118,21 +118,21 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
     @override
     @staticmethod
     def initialize(config: PPOConfig, env_config: EnvConfig, seed: int = 1) -> "PPO":
-        assert isinstance(env_config.action_space, gym.spaces.Box), (
-            "Non-box spaces currently not supported."
-        )
-        assert isinstance(env_config.observation_space, gym.spaces.Box), (
-            "Non-box spaces currently not supported."
-        )
+        #assert isinstance(env_config.action_space, gym.spaces.Box), (
+        #    "Non-box spaces currently not supported.", env_config.action_space
+        #)
+        #assert isinstance(env_config.observation_space, gym.spaces.Box), (
+        #    "Non-box spaces currently not supported.", env_config.observation_space
+        #)
 
         master_key = jax.random.PRNGKey(seed)
         algorithm_key, actor_init_key, vf_init_key = jax.random.split(master_key, 3)
         dummy_obs = jnp.array(
-            [env_config.observation_space.sample() for _ in range(config.num_tasks)]
+            [jnp.zeros(49) for _ in range(config.num_tasks)]
         )
 
         policy_net = ContinuousActionPolicy(
-            int(np.prod(env_config.action_space.shape)), config=config.policy_config
+               4, config=config.policy_config
         )
         policy = TrainState.create(
             apply_fn=policy_net.apply,

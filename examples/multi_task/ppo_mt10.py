@@ -59,7 +59,7 @@ def main() -> None:
             total_steps=int(2e7),
             rollout_steps=10_000,
         ),
-        checkpoint=True,
+        checkpoint=False,
         resume=args.resume,
     )
 

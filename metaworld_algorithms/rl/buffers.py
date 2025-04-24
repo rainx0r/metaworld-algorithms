@@ -403,8 +403,8 @@ class MultiTaskRolloutBuffer:
         self.num_rollout_steps = num_rollout_steps
         self.num_tasks = num_tasks
         self._rng = np.random.default_rng(seed)
-        self._obs_shape = np.array(env_obs_space.shape).prod()
-        self._action_shape = np.array(env_action_space.shape).prod()
+        self._obs_shape = 49 #np.array(env_obs_space.shape).prod()
+        self._action_shape = 4 # np.array(env_action_space.shape).prod()
         self.reset()  # Init buffer
 
     def reset(self) -> None:

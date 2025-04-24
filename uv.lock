@@ -655,7 +655,7 @@ wheels = [
 [[package]]
 name = "metaworld"
 version = "2.0.0"
-source = { git = "https://github.com/reginald-mclean/Metaworld.git?rev=release#62484453f559bc86d2ab0a30f16a0426c27b3a1c" }
+source = { git = "https://github.com/reginald-mclean/Metaworld.git?rev=metaworld2.0#47291c26a2ddf096e259ceede997a5e27da34e7e" }
 dependencies = [
     { name = "gymnasium" },
     { name = "imageio" },
