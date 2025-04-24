@@ -303,6 +303,7 @@ def to_padded_episode_batch(rollout: Rollout) -> Rollout:
                 if (field_data := getattr(rollout, field)) is not None:
                     sequences[field].append(field_data[task])
         else:
+            boundaries = boundaries[1:]
             episode_lengths.append(boundaries[0])
             episode_lengths += list(np.diff(boundaries))
             for field in rollout._fields:
