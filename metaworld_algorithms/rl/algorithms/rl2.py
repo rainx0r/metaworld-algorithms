@@ -273,19 +273,20 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         self,
         rollouts: Rollout,
     ) -> Rollout:
-        # NOTE: assume the final states are terminal
-        dones = np.ones(rollouts.rewards.shape[1:], dtype=rollouts.rewards.dtype)
-        values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
-            rollouts, self.gamma
-        )
-
         # NOTE: In RL2, we remove episode boundaries in GAE
         # In Rollout, dones is episode_starts in this case
         # We'll just keep the first episode start
         new_dones = np.zeros_like(rollouts.dones)
         new_dones[0] = 1.0
-        rollouts = rollouts._replace(values=values, returns=returns, dones=new_dones)
+        rollouts = rollouts._replace(dones=new_dones)
 
+        values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
+            rollouts, self.gamma
+        )
+        rollouts = rollouts._replace(values=values, returns=returns)
+
+        # NOTE: assume the final states are terminal
+        dones = np.ones(rollouts.rewards.shape[1:], dtype=rollouts.rewards.dtype)
         rollouts = compute_gae(
             rollouts, self.gamma, self.gae_lambda, last_values=None, dones=dones
         )
