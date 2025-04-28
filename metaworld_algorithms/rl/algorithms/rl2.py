@@ -17,6 +17,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from metaworld_algorithms.config.envs import MetaLearningEnvConfig
 from metaworld_algorithms.config.networks import RecurrentContinuousActionPolicyConfig
 from metaworld_algorithms.config.rl import AlgorithmConfig
+from metaworld_algorithms.monitoring.utils import Histogram
 from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.rl.algorithms.base import RNNBasedMetaLearningAlgorithm
 from metaworld_algorithms.rl.algorithms.utils import (
@@ -328,7 +329,8 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
 
             # TODO: Support entropy estimate using log probs
             # also maybe support garage-style entropy term
-            entropy_loss = action_dist.entropy()
+            # entropy_loss = action_dist.entropy()
+            entropy_loss = -new_log_probs
             entropy_loss = jnp.expand_dims(entropy_loss, -1)
             entropy_loss = jnp.where(data.valids, entropy_loss, zero_loss).mean()
 
@@ -358,6 +360,23 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         data = self.compute_advantages(data)  # (rollout_timestep, task, ...)
         data = to_padded_episode_batch(data)  # (episode, ep_timestep, ...)
 
+        assert data.advantages is not None and data.returns is not None
+        assert data.values is not None and data.stds is not None
+        assert data.means is not None and data.log_probs is not None
+        diagnostic_logs = {
+            "metrics/advantages_mean": np.mean(data.advantages),
+            "metrics/advantages": Histogram(data.advantages.reshape(-1)),
+            "metrics/returns_mean": np.mean(data.returns),
+            "metrics/returns": Histogram(data.returns.reshape(-1)),
+            "metrics/values_mean": np.mean(data.values),
+            "metrics/values": Histogram(data.values.reshape(-1)),
+            "metrics/rewards": Histogram(data.rewards.reshape(-1)),
+            "metrics/num_episodes": np.mean(data.dones.sum(axis=1)),
+            "metrics/action_std": Histogram(data.stds.reshape(-1)),
+            "metrics/action_mean": Histogram(data.means.reshape(-1)),
+            "metrics/approx_entropy": np.mean(-data.log_probs),
+        }
+
         # NOTE: Minibatch over rollouts
         # Pick random rollouts from the data for each minibatch, but use the whole episode
         key, minibatch_iterator_key = jax.random.split(self.key)
@@ -383,4 +402,4 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
                     )
                     break
 
-        return self, logs
+        return self, diagnostic_logs | logs

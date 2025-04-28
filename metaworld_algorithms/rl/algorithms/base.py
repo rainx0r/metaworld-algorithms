@@ -7,7 +7,6 @@ from jaxtyping import Float
 import numpy as np
 import numpy.typing as npt
 import orbax.checkpoint as ocp
-import wandb
 from flax import struct
 
 from metaworld_algorithms.checkpoint import get_checkpoint_save_args
@@ -21,6 +20,7 @@ from metaworld_algorithms.config.rl import (
     RNNBasedMetaLearningTrainingConfig,
     TrainingConfig,
 )
+from metaworld_algorithms.monitoring.utils import log
 from metaworld_algorithms.rl.buffers import (
     AbstractReplayBuffer,
     MultiTaskRolloutBuffer,
@@ -246,7 +246,7 @@ class GradientBasedMetaLearningAlgorithm(
             mean_episodic_return = np.mean(list(global_episodic_return))
             print("- Mean episodic return: ", mean_episodic_return)
             if track:
-                wandb.log(
+                log(
                     {"charts/mean_episodic_returns": mean_episodic_return},
                     step=global_step,
                 )
@@ -292,7 +292,7 @@ class GradientBasedMetaLearningAlgorithm(
                 )
 
                 if track:
-                    wandb.log(eval_metrics, step=global_step)
+                    log(eval_metrics, step=global_step)
 
                 if checkpoint_manager is not None:
                     checkpoint_manager.save(
@@ -316,7 +316,7 @@ class GradientBasedMetaLearningAlgorithm(
             sps = global_step / (time.time() - start_time)
             print("- SPS: ", sps)
             if track:
-                wandb.log({"charts/SPS": sps} | logs, step=global_step)
+                log({"charts/SPS": sps} | logs, step=global_step)
 
         return self
 
@@ -444,7 +444,7 @@ class RNNBasedMetaLearningAlgorithm(
             mean_episodic_return = np.mean(list(global_episodic_return))
             print("- Mean episodic return: ", mean_episodic_return)
             if track:
-                wandb.log(
+                log(
                     {"charts/mean_episodic_returns": mean_episodic_return},
                     step=global_step,
                 )
@@ -490,7 +490,7 @@ class RNNBasedMetaLearningAlgorithm(
                 )
 
                 if track:
-                    wandb.log(eval_metrics, step=global_step)
+                    log(eval_metrics, step=global_step)
 
                 if checkpoint_manager is not None:
                     checkpoint_manager.save(
@@ -514,7 +514,7 @@ class RNNBasedMetaLearningAlgorithm(
             sps = global_step / (time.time() - start_time)
             print("- SPS: ", sps)
             if track:
-                wandb.log({"charts/SPS": sps} | logs, step=global_step)
+                log({"charts/SPS": sps} | logs, step=global_step)
 
         return self
 
@@ -609,7 +609,7 @@ class OffPolicyAlgorithm(
                     f"global_step={total_steps}, mean_episodic_return={np.mean(list(global_episodic_return))}"
                 )
                 if track:
-                    wandb.log(
+                    log(
                         {
                             "charts/mean_episodic_return": np.mean(
                                 list(global_episodic_return)
@@ -633,7 +633,7 @@ class OffPolicyAlgorithm(
                     print("SPS:", sps)
 
                     if track:
-                        wandb.log({"charts/SPS": sps} | logs, step=total_steps)
+                        log({"charts/SPS": sps} | logs, step=total_steps)
 
                 # Evaluation
                 if (
@@ -658,7 +658,7 @@ class OffPolicyAlgorithm(
                     )
 
                     if track:
-                        wandb.log(eval_metrics, step=total_steps)
+                        log(eval_metrics, step=total_steps)
 
                     # Checkpointing
                     if checkpoint_manager is not None:
@@ -794,7 +794,7 @@ class OnPolicyAlgorithm(
                     f"global_step={total_steps}, mean_episodic_return={np.mean(list(global_episodic_return))}"
                 )
                 if track:
-                    wandb.log(
+                    log(
                         {
                             "charts/mean_episodic_return": np.mean(
                                 list(global_episodic_return)
@@ -813,7 +813,7 @@ class OnPolicyAlgorithm(
                 print("SPS:", sps)
 
                 if track:
-                    wandb.log({"charts/SPS": sps}, step=total_steps)
+                    log({"charts/SPS": sps}, step=total_steps)
 
             if rollout_buffer.ready:
                 rollouts = rollout_buffer.get()
@@ -827,7 +827,7 @@ class OnPolicyAlgorithm(
                 rollout_buffer.reset()
 
                 if track:
-                    wandb.log(logs, step=total_steps)
+                    log(logs, step=total_steps)
 
                 # Evaluation
                 if (
@@ -852,7 +852,7 @@ class OnPolicyAlgorithm(
                     )
 
                     if track:
-                        wandb.log(eval_metrics, step=total_steps)
+                        log(eval_metrics, step=total_steps)
 
                     # Checkpointing
                     if checkpoint_manager is not None:

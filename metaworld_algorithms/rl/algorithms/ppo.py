@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Self, override
+from typing import Literal, Self, override
 import itertools
 
 import chex
@@ -21,6 +21,7 @@ from metaworld_algorithms.config.networks import (
     ValueFunctionConfig,
 )
 from metaworld_algorithms.config.rl import AlgorithmConfig
+from metaworld_algorithms.monitoring.utils import Histogram
 from metaworld_algorithms.rl.algorithms.utils import to_minibatch_iterator
 from metaworld_algorithms.rl.networks import ContinuousActionPolicy, ValueFunction
 from metaworld_algorithms.types import (
@@ -33,7 +34,7 @@ from metaworld_algorithms.types import (
     Value,
 )
 
-from .utils import compute_gae
+from .utils import LinearFeatureBaseline, compute_gae
 from .base import OnPolicyAlgorithm
 
 
@@ -84,11 +85,31 @@ def _sample_action_dist_and_value(
     return action, action_log_prob, dist.mode(), dist.stddev(), value, key  # pyright: ignore[reportReturnType]
 
 
+@jax.jit
+def _sample_action_dist(
+    policy: TrainState,
+    observation: Observation,
+    key: PRNGKeyArray,
+) -> tuple[
+    Action,
+    LogProb,
+    Action,
+    Action,
+    PRNGKeyArray,
+]:
+    dist: distrax.Distribution
+    key, action_key = jax.random.split(key)
+    dist = policy.apply_fn(policy.params, observation)
+    action, action_log_prob = dist.sample_and_log_prob(seed=action_key)
+    return action, action_log_prob, dist.mode(), dist.stddev(), key  # pyright: ignore[reportReturnType]
+
+
 @dataclass(frozen=True)
 class PPOConfig(AlgorithmConfig):
     policy_config: ContinuousActionPolicyConfig = ContinuousActionPolicyConfig()
-    vf_config: ValueFunctionConfig = ValueFunctionConfig()
+    vf_config: ValueFunctionConfig | None = ValueFunctionConfig()
     clip_eps: float = 0.2
+    baseline_type: Literal["linear", "mlp"] = "mlp"
     clip_vf_loss: bool = True
     entropy_coefficient: float = 5e-3
     vf_coefficient: float = 0.001
@@ -101,10 +122,11 @@ class PPOConfig(AlgorithmConfig):
 
 class PPO(OnPolicyAlgorithm[PPOConfig]):
     policy: TrainState
-    value_function: TrainState
+    value_function: TrainState | None
     key: PRNGKeyArray
     gamma: float = struct.field(pytree_node=False)
     clip_eps: float = struct.field(pytree_node=False)
+    baseline_type: Literal["linear", "mlp"] = struct.field(pytree_node=False)
     clip_vf_loss: bool = struct.field(pytree_node=False)
     entropy_coefficient: float = struct.field(pytree_node=False)
     vf_coefficient: float = struct.field(pytree_node=False)
@@ -140,12 +162,17 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             tx=config.policy_config.network_config.optimizer.spawn(),
         )
 
-        vf_net = ValueFunction(config.vf_config)
-        value_function = TrainState.create(
-            apply_fn=vf_net.apply,
-            params=vf_net.init(vf_init_key, dummy_obs),
-            tx=config.vf_config.network_config.optimizer.spawn(),
-        )
+        value_function = None
+        if config.vf_config is not None:
+            assert config.baseline_type == "mlp", (
+                "MLP baseline must be specified if vf_config is provided"
+            )
+            vf_net = ValueFunction(config.vf_config)
+            value_function = TrainState.create(
+                apply_fn=vf_net.apply,
+                params=vf_net.init(vf_init_key, dummy_obs),
+                tx=config.vf_config.network_config.optimizer.spawn(),
+            )
 
         return PPO(
             num_tasks=config.num_tasks,
@@ -154,6 +181,7 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             key=algorithm_key,
             gamma=config.gamma,
             clip_eps=config.clip_eps,
+            baseline_type=config.baseline_type,
             clip_vf_loss=config.clip_vf_loss,
             entropy_coefficient=config.entropy_coefficient,
             vf_coefficient=config.vf_coefficient,
@@ -166,14 +194,17 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
 
     @override
     def get_num_params(self) -> dict[str, int]:
-        return {
+        ret = {
             "policy_num_params": sum(
                 x.size for x in jax.tree.leaves(self.policy.params)
             ),
-            "vf_num_params": sum(
-                x.size for x in jax.tree.leaves(self.value_function.params)
-            ),
         }
+        if self.baseline_type == "mlp":
+            assert self.value_function is not None
+            ret["vf_num_params"] = sum(
+                x.size for x in jax.tree.leaves(self.value_function.params)
+            )
+        return ret
 
     @override
     def sample_action(self, observation: Observation) -> tuple[Self, Action]:
@@ -184,16 +215,33 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
     def sample_action_and_aux(
         self, observation: Observation
     ) -> tuple[Self, Action, AuxPolicyOutputs]:
-        action, log_prob, mean, std, value, key = _sample_action_dist_and_value(
-            self.policy, self.value_function, observation, self.key
-        )
-        action, log_prob, mean, std, value = jax.device_get(
-            (action, log_prob, mean, std, value)
-        )
+        if self.baseline_type == "mlp":
+            action, log_prob, mean, std, value, key = _sample_action_dist_and_value(
+                self.policy, self.value_function, observation, self.key
+            )
+            action, log_prob, mean, std, value = jax.device_get(
+                (action, log_prob, mean, std, value)
+            )
+            aux_outputs = {
+                "log_prob": log_prob,
+                "mean": mean,
+                "std": std,
+                "value": value,
+            }
+        else:
+            action, log_prob, mean, std, key = _sample_action_dist(
+                self.policy, observation, self.key
+            )
+            action, log_prob, mean, std = jax.device_get((action, log_prob, mean, std))
+            aux_outputs = {
+                "log_prob": log_prob,
+                "mean": mean,
+                "std": std,
+            }
         return (
             self.replace(key=key),
             action,
-            {"log_prob": log_prob, "mean": mean, "std": std, "value": value},
+            aux_outputs,
         )
 
     @override
@@ -254,7 +302,10 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         }
 
     def update_value_function(self, data: Rollout) -> tuple[Self, LogDict]:
+        assert self.value_function is not None
+
         def value_function_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
+            assert self.value_function is not None
             new_values: Float[Array, "*batch 1"]
             new_values = self.value_function.apply_fn(params, data.observations)
             chex.assert_equal_shape((new_values, data.returns))
@@ -290,7 +341,11 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
     @jax.jit
     def _update_inner(self, data: Rollout) -> tuple[Self, LogDict]:
         self, policy_logs = self.update_policy(data)
-        self, vf_logs = self.update_value_function(data)
+
+        vf_logs = {}
+        if self.baseline_type == "mlp":
+            self, vf_logs = self.update_value_function(data)
+
         return self, policy_logs | vf_logs
 
     @override
@@ -301,9 +356,33 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         next_obs: Float[Observation, " task"] | None = None,
     ) -> tuple[Self, LogDict]:
         last_values = None
-        if next_obs is not None:
+        if next_obs is not None and self.baseline_type == "mlp":
             last_values = _get_value(self.value_function, next_obs)
+
+        if self.baseline_type == "linear":
+            values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
+                data, self.gamma
+            )
+            data = data._replace(values=values, returns=returns)
+            dones = np.ones(data.rewards.shape[1:], dtype=data.rewards.dtype)
         data = compute_gae(data, self.gamma, self.gae_lambda, last_values, dones)
+
+        assert data.advantages is not None and data.returns is not None
+        assert data.values is not None and data.stds is not None
+        assert data.means is not None and data.log_probs is not None
+        diagnostic_logs = {
+            "metrics/advantages_mean": np.mean(data.advantages),
+            "metrics/advantages": Histogram(data.advantages.reshape(-1)),
+            "metrics/returns_mean": np.mean(data.returns),
+            "metrics/returns": Histogram(data.returns.reshape(-1)),
+            "metrics/values_mean": np.mean(data.values),
+            "metrics/values": Histogram(data.values.reshape(-1)),
+            "metrics/rewards": Histogram(data.rewards.reshape(-1)),
+            "metrics/num_episodes": np.mean(data.dones.sum(axis=1)),
+            "metrics/action_std": Histogram(data.stds.reshape(-1)),
+            "metrics/action_mean": Histogram(data.means.reshape(-1)),
+            "metrics/approx_entropy": np.mean(-data.log_probs),
+        }
 
         key, minibatch_iterator_key = jax.random.split(self.key)
         self = self.replace(key=key)
@@ -328,4 +407,4 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
                     )
                     break
 
-        return self, logs
+        return self, diagnostic_logs | logs

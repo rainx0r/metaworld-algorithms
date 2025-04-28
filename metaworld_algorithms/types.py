@@ -4,6 +4,7 @@ import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 from jaxtyping import Array, Float
+from metaworld_algorithms.monitoring.utils import Histogram
 
 Action = Float[np.ndarray, "... action_dim"]
 Value = Float[np.ndarray, "... 1"]
@@ -12,7 +13,7 @@ Observation = Float[np.ndarray, "... obs_dim"]
 RNNState = Float[np.ndarray, "... rnn_state_dim"]
 LayerActivations = Float[Array, "batch_size layer_dim"]
 
-type LogDict = dict[str, float | Float[Array, ""]]
+type LogDict = dict[str, float | Float[Array, ""] | Histogram]
 type AuxPolicyOutputs = dict[str, npt.NDArray]
 type LayerActivationsDict = dict[str, Float[Array, "batch_size layer_dim"]]
 type Intermediates = dict[str, tuple[LayerActivations, ...] | "Intermediates"]

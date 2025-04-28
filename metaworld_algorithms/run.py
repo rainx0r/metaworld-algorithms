@@ -204,10 +204,10 @@ class Run:
             else:
                 raise ValueError("Invalid agent / env combination.")
             final_metrics = {
-                "mean_success_rate": float(mean_success_rate),
-                "mean_evaluation_return": float(mean_returns),
+                "charts/mean_success_rate": float(mean_success_rate),
+                "charts/mean_evaluation_return": float(mean_returns),
             } | {
-                f"{task_name}_success_rate": float(success_rate)
+                f"charts/{task_name}_success_rate": float(success_rate)
                 for task_name, success_rate in mean_success_per_task.items()
             }
             assert checkpoint_manager is not None
@@ -218,7 +218,9 @@ class Run:
             checkpoint_manager.save(
                 self.training_config.total_steps + 1,
                 args=get_last_agent_checkpoint_save_args(agent, final_metrics),
-                metrics=final_metrics,
+                metrics={
+                    k.removeprefix("charts/"): v for k, v in final_metrics.items()
+                },
             )
             checkpoint_manager.wait_until_finished()
 
