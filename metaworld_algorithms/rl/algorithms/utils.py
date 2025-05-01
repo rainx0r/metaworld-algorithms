@@ -1,9 +1,9 @@
 from typing import Any, Generator, Never
 
-import scipy
 import numpy as np
 import numpy.typing as npt
 import optax
+import scipy
 from flax import struct
 from flax.linen.fp8_ops import OVERWRITE_WITH_GRADIENT
 from flax.training.train_state import TrainState as FlaxTrainState
@@ -352,3 +352,13 @@ def dones_to_episode_starts(rollout: Rollout) -> Rollout:
         (np.ones((1, *rollout.dones.shape[1:])), rollout.dones), axis=0
     )[:-1]
     return rollout._replace(dones=episode_starts)
+
+
+def explained_variance(
+    y_pred: Float[npt.NDArray, " total_num_steps"],
+    y_true: Float[npt.NDArray, " total_num_steps"],
+) -> float:
+    # From SB3 https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/common/utils.py#L50
+    assert y_true.ndim == 1 and y_pred.ndim == 1
+    var_y = np.var(y_true)
+    return np.nan if var_y == 0 else float(1 - np.var(y_true - y_pred) / var_y)

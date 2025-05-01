@@ -1,6 +1,6 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Literal, Self, override
-import itertools
 
 import chex
 import distrax
@@ -13,7 +13,7 @@ import numpy.typing as npt
 from flax import struct
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
-from jaxtyping import Array, Float, PRNGKeyArray
+from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
 from metaworld_algorithms.config.envs import EnvConfig
 from metaworld_algorithms.config.networks import (
@@ -21,7 +21,12 @@ from metaworld_algorithms.config.networks import (
     ValueFunctionConfig,
 )
 from metaworld_algorithms.config.rl import AlgorithmConfig
-from metaworld_algorithms.monitoring.utils import Histogram
+from metaworld_algorithms.monitoring.utils import (
+    Histogram,
+    get_logs,
+    prefix_dict,
+    pytree_histogram,
+)
 from metaworld_algorithms.rl.algorithms.utils import to_minibatch_iterator
 from metaworld_algorithms.rl.networks import ContinuousActionPolicy, ValueFunction
 from metaworld_algorithms.types import (
@@ -34,7 +39,7 @@ from metaworld_algorithms.types import (
     Value,
 )
 
-from .utils import LinearFeatureBaseline, compute_gae
+from .utils import LinearFeatureBaseline, compute_gae, explained_variance
 from .base import OnPolicyAlgorithm
 
 
@@ -293,12 +298,21 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             self.policy.params
         )
         policy_grads_flat, _ = jax.flatten_util.ravel_pytree(policy_grads)
+        grads_hist_dict = prefix_dict(
+            "nn/policy_grads", pytree_histogram(policy_grads["params"])
+        )
+
         policy = self.policy.apply_gradients(grads=policy_grads)
-        policy_params_flat, _ = jax.flatten_util.ravel_pytree(policy.params)
+        policy_params_flat, _ = jax.flatten_util.ravel_pytree(policy.params["params"])
+        param_hist_dict = prefix_dict(
+            "nn/policy_params", pytree_histogram(policy.params["params"])
+        )
 
         return self.replace(policy=policy), logs | {
-            "metrics/policy_grad_magnitude": jnp.linalg.norm(policy_grads_flat),
-            "metrics/policy_param_norm": jnp.linalg.norm(policy_params_flat),
+            "nn/policy_grad_norm": jnp.linalg.norm(policy_grads_flat),
+            "nn/policy_param_norm": jnp.linalg.norm(policy_params_flat),
+            **grads_hist_dict,
+            **param_hist_dict,
         }
 
     def update_value_function(self, data: Rollout) -> tuple[Self, LogDict]:
@@ -327,16 +341,44 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             }
 
         (_, logs), vf_grads = jax.value_and_grad(value_function_loss, has_aux=True)(
-            self.value_function.params
+            self.value_function.params, data
         )
         vf_grads_flat, _ = jax.flatten_util.ravel_pytree(vf_grads)
+        grads_hist_dict = prefix_dict(
+            "nn/vf_grads", pytree_histogram(vf_grads["params"])
+        )
+
         value_function = self.value_function.apply_gradients(grads=vf_grads)
         vf_params_flat, _ = jax.flatten_util.ravel_pytree(value_function.params)
+        param_hist_dict = prefix_dict(
+            "nn/vf_params", pytree_histogram(value_function.params["params"])
+        )
 
         return self.replace(value_function=value_function), logs | {
-            "metrics/vf_grad_magnitude": jnp.linalg.norm(vf_grads_flat),
-            "metrics/vf_param_norm": jnp.linalg.norm(vf_params_flat),
+            "nn/vf_grad_norm": jnp.linalg.norm(vf_grads_flat),
+            "nn/vf_param_norm": jnp.linalg.norm(vf_params_flat),
+            **grads_hist_dict,
+            **param_hist_dict,
         }
+
+    @jax.jit
+    def _get_activations(
+        self, data: Rollout
+    ) -> tuple[PyTree[Array], PyTree[Array] | None]:
+        _, policy_state = self.policy.apply_fn(
+            self.policy.params, data.observations, mutable=["intermediates"]
+        )
+        policy_acts = policy_state["intermediates"]
+
+        vf_acts = None
+        if self.baseline_type == "mlp":
+            assert self.value_function is not None
+            _, vf_state = self.value_function.apply_fn(
+                self.value_function.params, data.observations, mutable=["intermediates"]
+            )
+            vf_acts = vf_state["intermediates"]
+
+        return policy_acts, vf_acts
 
     @jax.jit
     def _update_inner(self, data: Rollout) -> tuple[Self, LogDict]:
@@ -370,19 +412,21 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
         assert data.advantages is not None and data.returns is not None
         assert data.values is not None and data.stds is not None
         assert data.means is not None and data.log_probs is not None
-        diagnostic_logs = {
-            "metrics/advantages_mean": np.mean(data.advantages),
-            "metrics/advantages": Histogram(data.advantages.reshape(-1)),
-            "metrics/returns_mean": np.mean(data.returns),
-            "metrics/returns": Histogram(data.returns.reshape(-1)),
-            "metrics/values_mean": np.mean(data.values),
-            "metrics/values": Histogram(data.values.reshape(-1)),
-            "metrics/rewards": Histogram(data.rewards.reshape(-1)),
-            "metrics/num_episodes": np.mean(data.dones.sum(axis=1)),
-            "metrics/action_std": Histogram(data.stds.reshape(-1)),
-            "metrics/action_mean": Histogram(data.means.reshape(-1)),
-            "metrics/approx_entropy": np.mean(-data.log_probs),
-        }
+        diagnostic_logs = prefix_dict(
+            "data",
+            {
+                **get_logs("advantages", data.advantages),
+                **get_logs("returns", data.returns),
+                **get_logs("values", data.values),
+                **get_logs("rewards", data.rewards),
+                **get_logs(
+                    "num_episodes", data.dones.sum(axis=1), hist=False, std=False
+                ),
+                "action_std": Histogram(data.stds.reshape(-1)),
+                "action_mean": Histogram(data.means.reshape(-1)),
+                "approx_entropy": np.mean(-data.log_probs),
+            },
+        )
 
         key, minibatch_iterator_key = jax.random.split(self.key)
         self = self.replace(key=key)
@@ -393,18 +437,53 @@ class PPO(OnPolicyAlgorithm[PPOConfig]):
             data, self.num_gradient_steps, int(seed)
         )
 
-        logs = {}
+        update_logs = defaultdict(list)
+        keep_training = True
         for epoch in range(self.num_epochs):
-            for minibatch_rollout in itertools.islice(
-                minibatch_iterator, self.num_gradient_steps
-            ):
+            for step in range(self.num_gradient_steps):
+                minibatch_rollout = next(minibatch_iterator)
                 self, logs = self._update_inner(minibatch_rollout)
+                for k, v in logs.items():
+                    update_logs[k].append(v)
 
-            if self.target_kl is not None:
-                if logs["losses/approx_kl"] > self.target_kl:
+                if epoch == 0 and step == 0:  # Initial KL and Loss
+                    update_logs["metrics/kl_before"] = [logs["losses/approx_kl"]]
+                    update_logs["metrics/policy_loss_before"] = [
+                        logs["losses/policy_loss"]
+                    ]
+
+                    if "losses/value_function" in logs:
+                        update_logs["metrics/vf_loss_before"] = [
+                            logs["losses/value_function"]
+                        ]
+
+                if self.target_kl and logs["losses/approx_kl"] > 1.5 * self.target_kl:
                     print(
-                        f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"
+                        f"Stopped early at KL {logs['losses/approx_kl']}, (epoch: {epoch}, steps: {step})"
                     )
+                    keep_training = False
                     break
 
-        return self, diagnostic_logs | logs
+            if not keep_training:
+                break
+
+        # Finalize logs
+        final_logs: dict = {
+            "metrics/explained_variance": explained_variance(
+                data.values.reshape(-1), data.returns.reshape(-1)
+            )
+        }
+        for k, v in update_logs.items():
+            if not isinstance(v[0], Histogram):
+                final_logs[k] = np.mean(v)
+            else:
+                # TODO: should probably not be just the last histogram
+                final_logs[k] = v[-1]
+
+        # log activations
+        policy_acts, vf_acts = self._get_activations(next(minibatch_iterator))
+        final_logs.update(prefix_dict("nn/activations", pytree_histogram(policy_acts)))
+        if vf_acts is not None:
+            final_logs.update(pytree_histogram(vf_acts))
+
+        return self, diagnostic_logs | final_logs

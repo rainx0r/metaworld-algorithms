@@ -1,5 +1,4 @@
 import dataclasses
-import itertools
 from functools import partial
 from typing import Self, override
 
@@ -390,9 +389,8 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
 
         logs = {}
         for epoch in range(self.num_epochs):
-            for minibatch_rollout in itertools.islice(
-                minibatch_iterator, self.num_gradient_steps
-            ):
+            for _ in range(self.num_gradient_steps):
+                minibatch_rollout = next(minibatch_iterator)
                 self, logs = self._update_inner(minibatch_rollout)
 
             if self.target_kl is not None:
