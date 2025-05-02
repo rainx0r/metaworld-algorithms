@@ -198,8 +198,9 @@ class Run:
             elif isinstance(agent, MetaLearningAlgorithm) and isinstance(
                 self.env, MetaLearningEnvConfig
             ):
+                eval_envs = self.env.spawn_test(self.seed)
                 mean_success_rate, mean_returns, mean_success_per_task = (
-                    self.env.evaluate_metalearning(envs, agent.wrap())
+                    self.env.evaluate_metalearning(eval_envs, agent.wrap())
                 )
             else:
                 raise ValueError("Invalid agent / env combination.")
