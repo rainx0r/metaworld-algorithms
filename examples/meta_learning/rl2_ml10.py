@@ -75,8 +75,7 @@ def main() -> None:
                 head_bias_init=Initializer.ZEROS,
             ),
             num_epochs=10,
-            chunk_len=5000,
-            # target_kl=0.3,
+            chunk_len=250,
             normalize_advantages=False,
         ),
         training_config=GradientBasedMetaLearningTrainingConfig(
