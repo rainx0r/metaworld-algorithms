@@ -9,7 +9,6 @@ from metaworld_algorithms.config.networks import (
 )
 from metaworld_algorithms.config.nn import (
     RecurrentNeuralNetworkConfig,
-    VanillaNetworkConfig,
 )
 from metaworld_algorithms.config.optim import OptimizerConfig
 from metaworld_algorithms.config.rl import (
@@ -35,11 +34,11 @@ class Args:
 def main() -> None:
     args = tyro.cli(Args)
 
-    meta_batch_size = 20
+    meta_batch_size = 10
     num_tasks = 10
 
     run = Run(
-        run_name="ml10_rl2_bptt",
+        run_name="ml10_rl2_full",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
@@ -50,17 +49,10 @@ def main() -> None:
         algorithm=RL2Config(
             num_tasks=meta_batch_size,
             meta_batch_size=meta_batch_size,
-            gamma=0.995,
+            gamma=0.99,
             gae_lambda=0.97,
             policy_config=RecurrentContinuousActionPolicyConfig(
-                encoder_config=VanillaNetworkConfig(
-                    depth=1,
-                    width=256,
-                    activation=Activation.Tanh,
-                    kernel_init=Initializer.XAVIER_UNIFORM,
-                    bias_init=Initializer.ZEROS,
-                ),
-                # encoder_config=None,
+                encoder_config=None,
                 network_config=RecurrentNeuralNetworkConfig(
                     width=256,
                     cell_type=CellType.GRU,
@@ -68,17 +60,17 @@ def main() -> None:
                     recurrent_kernel_init=Initializer.ORTHOGONAL,
                     kernel_init=Initializer.XAVIER_UNIFORM,
                     bias_init=Initializer.ZEROS,
-                    optimizer=OptimizerConfig(max_grad_norm=1.0),
+                    optimizer=OptimizerConfig(lr=5e-4, max_grad_norm=1.0),
                 ),
-                log_std_min=np.log(1e-6),
-                log_std_max=None,
+                log_std_min=np.log(0.5),
+                log_std_max=np.log(1.5),
                 std_type=StdType.MLP_HEAD,
                 squash_tanh=False,
                 head_kernel_init=Initializer.XAVIER_UNIFORM,
                 head_bias_init=Initializer.ZEROS,
             ),
             num_epochs=10,
-            chunk_len=250,
+            chunk_len=5000,
             normalize_advantages=False,
         ),
         training_config=RNNBasedMetaLearningTrainingConfig(
