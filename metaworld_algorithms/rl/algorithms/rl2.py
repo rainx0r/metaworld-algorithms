@@ -394,6 +394,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         assert data.advantages is not None and data.returns is not None
         assert data.values is not None and data.stds is not None
         assert data.means is not None and data.log_probs is not None
+        assert data.rnn_states is not None
         diagnostic_logs = prefix_dict(
             "data",
             {
@@ -401,6 +402,7 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
                 **get_logs("returns", data.returns),
                 **get_logs("values", data.values),
                 **get_logs("rewards", data.rewards),
+                **get_logs("rnn_states", data.rnn_states),
                 "action_std": Histogram(data.stds.reshape(-1)),
                 "action_mean": Histogram(data.means.reshape(-1)),
                 "approx_entropy": np.mean(-data.log_probs),

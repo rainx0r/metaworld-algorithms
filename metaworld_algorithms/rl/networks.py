@@ -193,6 +193,7 @@ class RecurrentContinuousActionPolicy(nn.Module):
             self.sow("intermediates", "encoder_out", x)
 
         _, (carries, x) = self.rnn(self.cell, initial_carry, x)
+        self.sow("intermediates", "rnn_carries", carries)
         self.sow("intermediates", "rnn", x)
         out = self._process_head(self.head(x))
         return carries, out
