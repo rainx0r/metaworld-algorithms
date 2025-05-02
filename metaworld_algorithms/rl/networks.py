@@ -100,8 +100,31 @@ class RecurrentContinuousActionPolicy(nn.Module):
     def setup(self) -> None:
         # TODO: abstract this into a nn module?
         # Might be useful so we can support transformers instead etc
+
+        self.encoder = None
+        if self.config.encoder_config is not None:
+            self.encoder = get_nn_arch_for_config(self.config.encoder_config)(
+                config=self.config.encoder_config,
+                head_dim=self.config.encoder_config.width,
+                head_kernel_init=self.config.encoder_config.kernel_init(),
+                head_bias_init=self.config.encoder_config.bias_init(),
+                activate_last=True,
+            )
+
         self.cell: nn.RNNCellBase = self._get_cell()
-        self.rnn = nn.RNN(self.cell)
+
+        def scan_fn(cell: nn.RNNCellBase, carry: jax.Array, x: jax.Array):
+            carry, y = cell(carry, x)
+            return carry, (carry, y)
+
+        self.rnn = nn.scan(
+            scan_fn,
+            in_axes=0,
+            out_axes=0,
+            unroll=1,
+            variable_broadcast="params",
+            split_rngs={"params": False},
+        )
 
         head_kernel_init = uniform(1e-3)
         if self.config.head_kernel_init is not None:
@@ -152,18 +175,27 @@ class RecurrentContinuousActionPolicy(nn.Module):
     def __call__(
         self, carry: jax.Array, x: jax.Array
     ) -> tuple[jax.Array, distrax.Distribution]:
+        if self.encoder is not None:
+            x = self.encoder(x)
+            self.sow("intermediates", "encoder_out", x)
         carry, x = self.cell(carry, x)
-        x = self.head(x)
-        return carry, self._process_head(x)
+        self.sow("intermediates", "rnn_cell", x)
+        out = self._process_head(self.head(x))
+        return carry, out
 
     def rollout(
         self,
         x: jax.Array,
-        initial_carry: jax.Array | None = None,
-    ) -> distrax.Distribution:
-        x = self.rnn(x, initial_carry=initial_carry)  # pyright: ignore[reportAssignmentType]
-        x = self.head(x)
-        return self._process_head(x)
+        initial_carry: jax.Array,
+    ) -> tuple[jax.Array, distrax.Distribution]:
+        if self.encoder is not None:
+            x = self.encoder(x)
+            self.sow("intermediates", "encoder_out", x)
+
+        _, (carries, x) = self.rnn(self.cell, initial_carry, x)
+        self.sow("intermediates", "rnn", x)
+        out = self._process_head(self.head(x))
+        return carries, out
 
 
 class QValueFunction(nn.Module):

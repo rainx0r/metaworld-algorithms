@@ -1,3 +1,4 @@
+from collections import defaultdict
 import dataclasses
 from functools import partial
 from typing import Self, override
@@ -11,21 +12,27 @@ import numpy as np
 import numpy.typing as npt
 from flax import struct
 from flax.linen import FrozenDict
-from jaxtyping import Array, Float, PRNGKeyArray
+from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
 from metaworld_algorithms.config.envs import MetaLearningEnvConfig
 from metaworld_algorithms.config.networks import RecurrentContinuousActionPolicyConfig
 from metaworld_algorithms.config.rl import AlgorithmConfig
-from metaworld_algorithms.monitoring.utils import Histogram
+from metaworld_algorithms.monitoring.utils import (
+    Histogram,
+    get_logs,
+    prefix_dict,
+    pytree_histogram,
+)
 from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.rl.algorithms.base import RNNBasedMetaLearningAlgorithm
 from metaworld_algorithms.rl.algorithms.utils import (
     LinearFeatureBaseline,
     RNNTrainState,
     compute_gae,
+    explained_variance,
     normalize_advantages,
-    to_minibatch_iterator,
-    to_padded_episode_batch,
+    to_deterministic_minibatch_iterator,
+    to_overlapping_chunks,
 )
 from metaworld_algorithms.rl.networks import RecurrentContinuousActionPolicy
 from metaworld_algorithms.types import (
@@ -100,9 +107,10 @@ class RL2Config(AlgorithmConfig):
     entropy_coefficient: float = 5e-3
     normalize_advantages: bool = True
     gae_lambda: float = 0.95
-    num_gradient_steps: int = 1
     num_epochs: int = 10
     target_kl: float | None = None
+    chunk_len: int = 200
+    overlap: int = 50
 
 
 class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
@@ -116,9 +124,11 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
     normalize_advantages: bool = struct.field(pytree_node=False)
 
     gae_lambda: float = struct.field(pytree_node=False)
-    num_gradient_steps: int = struct.field(pytree_node=False)
     num_epochs: int = struct.field(pytree_node=False)
     target_kl: float | None = struct.field(pytree_node=False)
+
+    chunk_len: int = struct.field(pytree_node=False)
+    overlap: int = struct.field(pytree_node=False)
 
     @override
     @staticmethod
@@ -169,9 +179,10 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             entropy_coefficient=config.entropy_coefficient,
             normalize_advantages=config.normalize_advantages,
             gae_lambda=config.gae_lambda,
-            num_gradient_steps=config.num_gradient_steps,
             num_epochs=config.num_epochs,
             target_kl=config.target_kl,
+            chunk_len=config.chunk_len,
+            overlap=config.overlap,
         )
 
     @override
@@ -295,8 +306,8 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         return rollouts
 
     @jax.jit
-    def _update_inner(self, data: Rollout) -> tuple[Self, LogDict]:
-        def policy_loss(params: FrozenDict) -> tuple[Float[Array, ""], LogDict]:
+    def _update_inner(self, data: Rollout, initial_carry: jax.Array) -> tuple[Self, jax.Array, LogDict]:
+        def policy_loss(params: FrozenDict) -> tuple[Float[Array, ""], tuple[jax.Array, LogDict]]:
             action_dist: distrax.Distribution
             new_log_probs: Float[Array, " *batch"]
             assert data.log_probs is not None
@@ -304,8 +315,8 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             assert data.rnn_states is not None
             assert data.valids is not None
 
-            action_dist = self.policy.seq_apply_fn(
-                params, data.observations, initial_carry=data.rnn_states[..., 0, :]
+            carries, action_dist = self.policy.seq_apply_fn(
+                params, data.observations, initial_carry=initial_carry
             )
             new_log_probs = action_dist.log_prob(data.actions)  # pyright: ignore[reportAssignmentType]
             log_ratio = new_log_probs.reshape(data.log_probs.shape) - data.log_probs
@@ -328,76 +339,118 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
 
             # TODO: Support entropy estimate using log probs
             # also maybe support garage-style entropy term
-            # entropy_loss = action_dist.entropy()
-            entropy_loss = -new_log_probs
+            entropy_loss = action_dist.entropy()
             entropy_loss = jnp.expand_dims(entropy_loss, -1)
             entropy_loss = jnp.where(data.valids, entropy_loss, zero_loss).mean()
 
-            return pg_loss - self.entropy_coefficient * entropy_loss, {
+            return pg_loss - self.entropy_coefficient * entropy_loss, (carries, {
                 "losses/entropy_loss": entropy_loss,
                 "losses/policy_loss": pg_loss,
                 "losses/approx_kl": approx_kl,
                 "losses/clip_fracs": clip_fracs,
-            }
+            })
 
-        (_, logs), policy_grads = jax.value_and_grad(policy_loss, has_aux=True)(
+        (_, (carries, logs)), policy_grads = jax.value_and_grad(policy_loss, has_aux=True)(
             self.policy.params
         )
         policy_grads_flat, _ = jax.flatten_util.ravel_pytree(policy_grads)
+        grads_hist_dict = prefix_dict(
+            "nn/policy_grads", pytree_histogram(policy_grads["params"])
+        )
+
         policy = self.policy.apply_gradients(grads=policy_grads)
         policy_params_flat, _ = jax.flatten_util.ravel_pytree(policy.params)
+        param_hist_dict = prefix_dict(
+            "nn/policy_params", pytree_histogram(policy.params["params"])
+        )
 
-        return self.replace(policy=policy), logs | {
-            "metrics/policy_grad_magnitude": jnp.linalg.norm(policy_grads_flat),
-            "metrics/policy_param_norm": jnp.linalg.norm(policy_params_flat),
+        return self.replace(policy=policy), carries, logs | {
+            "nn/policy_grad_norm": jnp.linalg.norm(policy_grads_flat),
+            "nn/policy_param_norm": jnp.linalg.norm(policy_params_flat),
+            **grads_hist_dict,
+            **param_hist_dict,
         }
+
+    @jax.jit
+    def _get_activations(
+        self, data: Rollout
+    ) -> tuple[PyTree[Array], PyTree[Array] | None]:
+        assert data.rnn_states is not None
+        _, policy_state = self.policy.seq_apply_fn(
+            self.policy.params,
+            data.observations,
+            initial_carry=data.rnn_states[0],
+            mutable=["intermediates"],
+        )
+        return policy_state["intermediates"]
 
     @override
     def update(self, data: Rollout) -> tuple[Self, LogDict]:
         # NOTE: We assume that during training all episodes have the same length
         # This should be the case for Metaworld.
         data = self.compute_advantages(data)  # (rollout_timestep, task, ...)
-        data = to_padded_episode_batch(data)  # (episode, ep_timestep, ...)
+        data = to_overlapping_chunks(data, self.chunk_len, self.overlap)
 
         assert data.advantages is not None and data.returns is not None
         assert data.values is not None and data.stds is not None
         assert data.means is not None and data.log_probs is not None
-        diagnostic_logs = {
-            "metrics/advantages_mean": np.mean(data.advantages),
-            "metrics/advantages": Histogram(data.advantages.reshape(-1)),
-            "metrics/returns_mean": np.mean(data.returns),
-            "metrics/returns": Histogram(data.returns.reshape(-1)),
-            "metrics/values_mean": np.mean(data.values),
-            "metrics/values": Histogram(data.values.reshape(-1)),
-            "metrics/rewards": Histogram(data.rewards.reshape(-1)),
-            "metrics/num_episodes": np.mean(data.dones.sum(axis=1)),
-            "metrics/action_std": Histogram(data.stds.reshape(-1)),
-            "metrics/action_mean": Histogram(data.means.reshape(-1)),
-            "metrics/approx_entropy": np.mean(-data.log_probs),
-        }
-
-        # NOTE: Minibatch over rollouts
-        # Pick random rollouts from the data for each minibatch, but use the whole episode
-        key, minibatch_iterator_key = jax.random.split(self.key)
-        self = self.replace(key=key)
-        seed = jax.random.randint(
-            minibatch_iterator_key, (), minval=0, maxval=jnp.iinfo(jnp.int32).max
-        ).item()
-        minibatch_iterator = to_minibatch_iterator(
-            data, self.num_gradient_steps, int(seed), flatten_batch_dims=False
+        diagnostic_logs = prefix_dict(
+            "data",
+            {
+                **get_logs("advantages", data.advantages),
+                **get_logs("returns", data.returns),
+                **get_logs("values", data.values),
+                **get_logs("rewards", data.rewards),
+                "action_std": Histogram(data.stds.reshape(-1)),
+                "action_mean": Histogram(data.means.reshape(-1)),
+                "approx_entropy": np.mean(-data.log_probs),
+            },
         )
 
-        logs = {}
+        minibatch_iterator = to_deterministic_minibatch_iterator(data)
+        update_logs = defaultdict(list)
+        keep_training = True
         for epoch in range(self.num_epochs):
-            for _ in range(self.num_gradient_steps):
+            self, initial_carry = self.init_recurrent_state(data.rewards.shape[2])
+            for step in range(len(data.rewards)):
                 minibatch_rollout = next(minibatch_iterator)
-                self, logs = self._update_inner(minibatch_rollout)
+                self, carries, logs = self._update_inner(minibatch_rollout, initial_carry)
+                initial_carry = carries[(self.chunk_len - self.overlap - 1)]
+                for k, v in logs.items():
+                    update_logs[k].append(v)
 
-            if self.target_kl is not None:
-                if logs["losses/approx_kl"] > self.target_kl:
-                    print(
-                        f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"
-                    )
-                    break
+                if epoch == 0 and step == 0:  # Initial KL and Loss
+                    update_logs["metrics/kl_before"] = [logs["losses/approx_kl"]]
+                    update_logs["metrics/policy_loss_before"] = [
+                        logs["losses/policy_loss"]
+                    ]
 
-        return self, diagnostic_logs | logs
+                if self.target_kl is not None:
+                    if logs["losses/approx_kl"] > 1.5 * self.target_kl:
+                        print(
+                            f"Stopped early at KL {logs['losses/approx_kl']}, ({epoch} epochs)"
+                        )
+                        keep_training = False
+                        break
+
+            if not keep_training:
+                break
+
+        # Finalize logs
+        final_logs: dict = {
+            "metrics/explained_variance": explained_variance(
+                data.values.reshape(-1), data.returns.reshape(-1)
+            )
+        }
+        for k, v in update_logs.items():
+            if not isinstance(v[0], Histogram):
+                final_logs[k] = np.mean(v)
+            else:
+                # TODO: should probably not be just the last histogram
+                final_logs[k] = v[-1]
+
+        # log activations
+        policy_acts = self._get_activations(next(minibatch_iterator))
+        final_logs.update(prefix_dict("nn/activations", pytree_histogram(policy_acts)))
+
+        return self, diagnostic_logs | final_logs

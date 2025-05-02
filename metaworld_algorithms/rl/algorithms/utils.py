@@ -60,7 +60,6 @@ class MetaTrainState(TrainState):
     inner_train_state: TrainState
     expand_params: Callable = struct.field(pytree_node=False)
 
-
 def to_minibatch_iterator(
     data: Rollout, num: int, seed: int, flatten_batch_dims: bool = True
 ) -> Generator[Rollout, None, Never]:
@@ -95,6 +94,19 @@ def to_minibatch_iterator(
                 )
             )
 
+
+def to_deterministic_minibatch_iterator(data: Rollout) -> Generator[Rollout, None, Never]:
+    # Flatten batch dims
+    rollouts = data
+
+    while True:
+        for step in range(len(rollouts.rewards)):
+            yield Rollout(
+                *map(
+                    lambda x: x[step] if x is not None else None,  # pyright: ignore[reportArgumentType]
+                    rollouts,
+                )
+            )
 
 def compute_gae(
     rollouts: Rollout,
@@ -326,6 +338,33 @@ def to_padded_episode_batch(rollout: Rollout) -> Rollout:
     sequences = {field: np.stack(sequences[field]) for field in sequences}
     rollout = Rollout(**sequences)
     rollout = rollout._replace(valids=valids.reshape(rollout.rewards.shape))
+    return rollout
+
+
+def to_overlapping_chunks(rollout: Rollout, chunk_len: int, overlap: int) -> Rollout:
+    # Recommended by https://danijar.com/tips-for-training-recurrent-neural-networks/
+    # HACK: Currently assumes there's only a single episode cause it's used for RL2
+    assert overlap < chunk_len
+    step = chunk_len - overlap
+
+    T = rollout.observations.shape[0]  # (time, ...)
+    starts = np.arange(0, T - overlap, step)
+
+    sequences = {
+        field: [] for field in rollout._fields if getattr(rollout, field) is not None
+    }
+
+    for s in starts:
+        end = s + chunk_len
+        if end > T:
+            break
+        for field in sequences:
+            field_data = getattr(rollout, field)
+            sequences[field].append(field_data[s:end])
+
+    data = {field: np.stack(sequences[field]) for field in sequences}
+    rollout = Rollout(**data)
+    rollout = rollout._replace(valids=np.ones_like(rollout.rewards))
     return rollout
 
 

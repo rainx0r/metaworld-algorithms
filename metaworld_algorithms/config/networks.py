@@ -31,9 +31,11 @@ class ContinuousActionPolicyConfig:
 
 @dataclass(frozen=True)
 class RecurrentContinuousActionPolicyConfig:
-    # TODO:
     network_config: RecurrentNeuralNetworkConfig = RecurrentNeuralNetworkConfig()
     """The config for the neural network to use for function approximation."""
+
+    encoder_config: NeuralNetworkConfig | None = VanillaNetworkConfig(width=400, depth=2)
+    """The config for the neural network to use for encoding the observations. The optimizer config for this network is ignored."""
 
     squash_tanh: bool = True
     """Whether or not to squash the outputs with tanh."""

@@ -19,6 +19,7 @@ class Initializer(enum.Enum):
     XAVIER_UNIFORM = enum.member(jax.nn.initializers.xavier_uniform)
     CONSTANT = enum.member(jax.nn.initializers.constant)
     UNIFORM = enum.member(_uniform_init)
+    ORTHOGONAL = enum.member(jax.nn.initializers.orthogonal)
 
     def __call__(self, *args, **kwargs):
         return self.value(*args, **kwargs)

@@ -510,7 +510,13 @@ class RNNBasedMetaLearningAlgorithm(
                     print("- Saved Model")
 
             # Logging
-            print(logs)
+            print(
+                {
+                    k: v
+                    for k, v in logs.items()
+                    if not (k.startswith("nn") or k.startswith("data"))
+                }
+            )
             sps = global_step / (time.time() - start_time)
             print("- SPS: ", sps)
             if track:

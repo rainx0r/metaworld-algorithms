@@ -17,6 +17,7 @@ class MetaworldConfig(EnvConfig):
     reward_func_version: str = "v2"
     num_goals: int = 50
     reward_normalization_method: str | None = None
+    normalize_observations: bool = False
     env_name: str | None = None
 
     @cached_property
@@ -115,6 +116,7 @@ class MetaworldConfig(EnvConfig):
             reward_function_version=self.reward_func_version,
             num_goals=self.num_goals,
             reward_normalization_method=self.reward_normalization_method,
+            normalize_observations=self.normalize_observations,
         )
 
 
@@ -216,6 +218,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             reward_function_version=self.reward_func_version,
             recurrent_info_in_obs=self.recurrent_info_in_obs,
             reward_normalization_method=self.reward_normalization_method,
+            normalize_observations=self.normalize_observations,
         )
         if self.env_name:
             kwargs["env_name"] = self.env_name
@@ -236,6 +239,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             reward_function_version=self.reward_func_version,
             recurrent_info_in_obs=self.recurrent_info_in_obs,
             reward_normalization_method=self.reward_normalization_method,
+            normalize_observations=self.normalize_observations,
         )
         if self.env_name:
             kwargs["env_name"] = self.env_name

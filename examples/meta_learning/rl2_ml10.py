@@ -7,7 +7,7 @@ import numpy as np
 from metaworld_algorithms.config.networks import (
     RecurrentContinuousActionPolicyConfig,
 )
-from metaworld_algorithms.config.nn import RecurrentNeuralNetworkConfig
+from metaworld_algorithms.config.nn import RecurrentNeuralNetworkConfig, VanillaNetworkConfig
 from metaworld_algorithms.config.optim import OptimizerConfig
 from metaworld_algorithms.config.rl import (
     GradientBasedMetaLearningTrainingConfig,
@@ -36,30 +36,36 @@ def main() -> None:
     num_tasks = 10
 
     run = Run(
-        run_name="ml10_rl2",
+        run_name="ml10_rl2_bptt",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
             env_id="ML10",
             meta_batch_size=meta_batch_size,
             recurrent_info_in_obs=True,
-            max_episode_steps=250,
-            # reward_normalization_method="exponential",
         ),
         algorithm=RL2Config(
             num_tasks=meta_batch_size,
             meta_batch_size=meta_batch_size,
-            gamma=0.99,
-            gae_lambda=0.95,
+            gamma=0.995,
+            gae_lambda=0.97,
             policy_config=RecurrentContinuousActionPolicyConfig(
+                encoder_config=VanillaNetworkConfig(
+                    depth=1,
+                    width=256,
+                    activation=Activation.Tanh,
+                    kernel_init=Initializer.XAVIER_UNIFORM,
+                    bias_init=Initializer.ZEROS,
+                ),
+                # encoder_config=None,
                 network_config=RecurrentNeuralNetworkConfig(
                     width=256,
                     cell_type=CellType.GRU,
                     activation=Activation.Tanh,
-                    recurrent_kernel_init=Initializer.XAVIER_UNIFORM,
+                    recurrent_kernel_init=Initializer.ORTHOGONAL,
                     kernel_init=Initializer.XAVIER_UNIFORM,
                     bias_init=Initializer.ZEROS,
-                    optimizer=OptimizerConfig(lr=5e-4)
+                    optimizer=OptimizerConfig(max_grad_norm=1.0)
                 ),
                 log_std_min=np.log(1e-6),
                 log_std_max=None,
@@ -68,10 +74,10 @@ def main() -> None:
                 head_kernel_init=Initializer.XAVIER_UNIFORM,
                 head_bias_init=Initializer.ZEROS,
             ),
-            entropy_coefficient=0.0,
+            num_epochs=10,
+            chunk_len=5000,
+            # target_kl=0.3,
             normalize_advantages=False,
-            num_gradient_steps=5,
-            num_epochs=16,
         ),
         training_config=GradientBasedMetaLearningTrainingConfig(
             meta_batch_size=meta_batch_size,
