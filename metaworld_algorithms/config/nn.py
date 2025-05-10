@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from .optim import OptimizerConfig
-from .utils import Activation, Initializer
+from .utils import Activation, CellType, Initializer
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,6 +28,37 @@ class NeuralNetworkConfig:
 
     optimizer: OptimizerConfig = OptimizerConfig()
     """The optimizer to use for the network."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class RecurrentNeuralNetworkConfig:
+    width: int = 256
+    """The dimension of the recurrent layer and the hidden state."""
+
+    cell_type: CellType = CellType.GRU
+    """The type of recurrent cell to use."""
+
+    recurrent_kernel_init: Initializer = Initializer.HE_UNIFORM
+    """The initializer to use for the recurrent layer weights."""
+
+    kernel_init: Initializer = Initializer.HE_UNIFORM
+    """The initializer to use for the recurrent layer weights."""
+
+    bias_init: Initializer = Initializer.ZEROS
+    """The initializer to use for the recurrent layer biases."""
+
+    use_bias: bool = True
+    """Whether or not to use bias terms across the network."""
+
+    carry_init: Initializer = Initializer.ZEROS
+    """The initializer to use for the recurrent carry."""
+
+    activation: Activation = Activation.ReLU
+    """The activation function to use after the recurrent layer."""
+
+    optimizer: OptimizerConfig = OptimizerConfig()
+    """The optimizer to use for the whole network."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class VanillaNetworkConfig(NeuralNetworkConfig):

@@ -9,6 +9,7 @@ from jaxtyping import Float
 from metaworld_algorithms.types import (
     Action,
     Observation,
+    RNNState,
     ReplayBufferCheckpoint,
     ReplayBufferSamples,
     Rollout,
@@ -114,7 +115,7 @@ class ReplayBuffer(AbstractReplayBuffer):
                 "pos": self.pos,
                 "full": self.full,
             },
-            "rng_state": self._rng.__getstate__(),
+            "rng_state": self._rng.bit_generator.state,
         }
 
     @override
@@ -126,7 +127,7 @@ class ReplayBuffer(AbstractReplayBuffer):
             assert key in ckpt["data"]
             setattr(self, key, ckpt["data"][key])
 
-        self._rng.__setstate__(ckpt["rng_state"])
+        self._rng.bit_generator.state = ckpt["rng_state"]
 
     @override
     def add(
@@ -273,7 +274,7 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
                 "pos": self.pos,
                 "full": self.full,
             },
-            "rng_state": self._rng.__getstate__(),
+            "rng_state": self._rng.bit_generator.state,
         }
 
     @override
@@ -285,7 +286,7 @@ class MultiTaskReplayBuffer(AbstractReplayBuffer):
             assert key in ckpt["data"]
             setattr(self, key, ckpt["data"][key])
 
-        self._rng.__setstate__(ckpt["rng_state"])
+        self._rng.bit_generator.state = ckpt["rng_state"]
 
     @override
     def add(
@@ -391,6 +392,7 @@ class MultiTaskRolloutBuffer:
     log_probs: Float[npt.NDArray, "timestep task 1"]
     means: Float[Action, "timestep task"]
     stds: Float[Action, "timestep task"]
+    rnn_states: Float[RNNState, "timestep task"] | None = None
 
     def __init__(
         self,
@@ -398,6 +400,8 @@ class MultiTaskRolloutBuffer:
         num_tasks: int,
         env_obs_space: gym.Space,
         env_action_space: gym.Space,
+        rnn_state_dim: int | None = None,
+        dtype: npt.DTypeLike = np.float32,
         seed: int | None = None,
     ) -> None:
         self.num_rollout_steps = num_rollout_steps
@@ -405,30 +409,39 @@ class MultiTaskRolloutBuffer:
         self._rng = np.random.default_rng(seed)
         self._obs_shape = np.array(env_obs_space.shape).prod()
         self._action_shape = np.array(env_action_space.shape).prod()
+        self._rnn_state_dim = rnn_state_dim
+        self.dtype = dtype
         self.reset()  # Init buffer
 
     def reset(self) -> None:
         """Reinitialize the buffer."""
         self.observations = np.zeros(
-            (self.num_rollout_steps, self.num_tasks, self._obs_shape), dtype=np.float32
+            (self.num_rollout_steps, self.num_tasks, self._obs_shape), dtype=self.dtype
         )
         self.actions = np.zeros(
             (self.num_rollout_steps, self.num_tasks, self._action_shape),
-            dtype=np.float32,
+            dtype=self.dtype,
         )
         self.rewards = np.zeros(
-            (self.num_rollout_steps, self.num_tasks, 1), dtype=np.float32
+            (self.num_rollout_steps, self.num_tasks, 1), dtype=self.dtype
         )
         self.dones = np.zeros(
-            (self.num_rollout_steps, self.num_tasks, 1), dtype=np.float32
+            (self.num_rollout_steps, self.num_tasks, 1), dtype=self.dtype
         )
 
         self.log_probs = np.zeros(
-            (self.num_rollout_steps, self.num_tasks, 1), dtype=np.float32
+            (self.num_rollout_steps, self.num_tasks, 1), dtype=self.dtype
         )
         self.values = np.zeros_like(self.rewards)
         self.means = np.zeros_like(self.actions)
         self.stds = np.zeros_like(self.actions)
+
+        if self._rnn_state_dim is not None:
+            self.rnn_states = np.zeros(
+                (self.num_rollout_steps, self.num_tasks, self._rnn_state_dim),
+                dtype=self.dtype,
+            )
+
         self.pos = 0
 
     @property
@@ -445,6 +458,7 @@ class MultiTaskRolloutBuffer:
         log_prob: Float[npt.NDArray, " task"] | None = None,
         mean: Float[Action, " task"] | None = None,
         std: Float[Action, " task"] | None = None,
+        rnn_state: Float[RNNState, " task"] | None = None,
     ):
         # NOTE: assuming batch dim = task dim
         assert (
@@ -471,6 +485,9 @@ class MultiTaskRolloutBuffer:
             self.means[self.pos] = mean.copy()
         if std is not None:
             self.stds[self.pos] = std.copy()
+        if rnn_state is not None:
+            assert self.rnn_states is not None
+            self.rnn_states[self.pos] = rnn_state.copy()
 
         self.pos += 1
 
@@ -486,4 +503,5 @@ class MultiTaskRolloutBuffer:
             self.means,
             self.stds,
             self.values,
+            self.rnn_states,
         )

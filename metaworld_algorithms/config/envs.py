@@ -34,6 +34,8 @@ class EnvConfig(abc.ABC):
 
 @dataclass(frozen=True)
 class MetaLearningEnvConfig(EnvConfig):
+    recurrent_info_in_obs: bool = False
+
     @abc.abstractmethod
     def spawn_test(self, seed: int = 1) -> GymVectorEnv: ...
 

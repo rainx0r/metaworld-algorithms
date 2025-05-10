@@ -50,3 +50,8 @@ class MetaLearningTrainingConfig(TrainingConfig):
 @dataclass(frozen=True)
 class GradientBasedMetaLearningTrainingConfig(MetaLearningTrainingConfig):
     num_inner_gradient_steps: int = 1
+
+
+@dataclass(frozen=True)
+class RNNBasedMetaLearningTrainingConfig(MetaLearningTrainingConfig):
+    ...

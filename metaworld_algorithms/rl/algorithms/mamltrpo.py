@@ -31,6 +31,7 @@ from metaworld_algorithms.types import (
     MetaLearningAgent,
     Observation,
     Rollout,
+    Timestep,
 )
 
 from .base import GradientBasedMetaLearningAlgorithm
@@ -63,7 +64,7 @@ def _eval_action(
     return dist.mode()
 
 
-# @jax.jit
+@jax.jit
 def _sample_action_dist(
     policy: TrainState,
     observation: Observation,
@@ -141,7 +142,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
 
         algorithm_key, policy_key = jax.random.split(master_key, 2)
         policy_net = EnsembleMDContinuousActionPolicy(
-            num=env_config.meta_batch_size,
+            num=config.meta_batch_size,
             action_dim=int(np.prod(env_config.action_space.shape)),
             config=config.policy_config,
         )
@@ -149,7 +150,7 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         dummy_obs = jnp.array(
             [
                 env_config.observation_space.sample()
-                for _ in range(env_config.meta_batch_size)
+                for _ in range(config.meta_batch_size)
             ]
         )
 
@@ -193,21 +194,19 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
     ) -> tuple[Self, Action, AuxPolicyOutputs]:
         rets = _sample_action_dist(self.policy.inner_train_state, observation, self.key)
         action, log_prob, mean, std = jax.device_get(rets[:-1])
-        key = jax.device_get(rets[-1])
+        key = rets[-1]
         return (
             self.replace(key=key),
             action,
             {"log_prob": log_prob, "mean": mean, "std": std},
         )
 
-    @override
     def sample_action(self, observation: Observation) -> tuple[Self, Action]:
         action, key = _sample_action(
             self.policy.inner_train_state, observation, self.key
         )
         return self.replace(key=key), jax.device_get(action)
 
-    @override
     def eval_action(self, observations: Observation) -> Action:
         return jax.device_get(_eval_action(self.policy.inner_train_state, observations))
 
@@ -222,30 +221,39 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
 
     class MAMLTRPOWrapped(MetaLearningAgent):
         def __init__(self, agent: "MAMLTRPO"):
-            self.agent = agent
+            self._agent = agent
 
-        def reset_state(self):
-            self.agent = self.agent.init_ensemble_networks()
+        def init(self) -> None:
+            self._current_agent = self._agent.init_ensemble_networks()
+            self._buffer = []
+
+        def reset(self, env_mask: npt.NDArray[np.bool_]) -> None:
+            del env_mask
+            pass  # For evaluation interface compatibility
 
         def adapt_action(
             self, observations: npt.NDArray[np.float64]
         ) -> tuple[npt.NDArray[np.float64], dict[str, npt.NDArray]]:
-            self.agent, action, aux_policy_outs = self.agent.sample_action_and_aux(
+            self._current_agent, action, aux_policy_outs = self._current_agent.sample_action_and_aux(
                 observations
             )
             return action, aux_policy_outs
 
-        def adapt(self, rollouts: Rollout) -> None:
-            # MetaWorld's evaluation stores done instead of episode_start
-            # TODO: Maybe just change the interface?
+        def step(self, timestep: Timestep) -> None:
+            self._buffer.append(timestep)
+
+        def adapt(self) -> None:
+            rollouts = Rollout.from_list(self._buffer)
+            # NOTE: MetaWorld's evaluation stores done instead of episode_start
             rollouts = dones_to_episode_starts(rollouts)
-            rollouts = self.agent.compute_advantages(rollouts)
-            self.agent = self.agent.adapt(rollouts)
+            rollouts = self._current_agent.compute_advantages(rollouts)
+            self._current_agent = self._current_agent.adapt(rollouts)
+            self._buffer.clear()
 
         def eval_action(
             self, observations: npt.NDArray[np.float64]
         ) -> npt.NDArray[np.float64]:
-            return self.agent.eval_action(observations)
+            return self._current_agent.eval_action(observations)
 
     @override
     def wrap(self) -> MetaLearningAgent:
@@ -256,14 +264,10 @@ class MAMLTRPO(GradientBasedMetaLearningAlgorithm[MAMLTRPOConfig]):
         rollouts: Rollout,
     ) -> Rollout:
         # NOTE: assume the final states are terminal
-        dones = np.full(rollouts.rewards.shape[1:], 1.0, dtype=rollouts.rewards.dtype)
+        dones = np.ones(rollouts.rewards.shape[1:], dtype=rollouts.rewards.dtype)
         values, returns = LinearFeatureBaseline.get_baseline_values_and_returns(
             rollouts, self.gamma
         )
-        if not hasattr(rollouts, "returns"):
-            # For Rollout from MetaWorld's evaluation interface
-            # TODO: Maybe just change the interface?
-            rollouts = Rollout(*rollouts)
         rollouts = rollouts._replace(values=values, returns=returns)
         rollouts = compute_gae(
             rollouts, self.gamma, self.gae_lambda, last_values=None, dones=dones

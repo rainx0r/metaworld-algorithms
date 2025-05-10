@@ -35,12 +35,13 @@ def main() -> None:
     meta_batch_size = 10
 
     run = Run(
-        run_name=f"ml1_mamltrpo_{args.env_name}",
+        run_name=f"ml1_mamltrpo_v1_{args.env_name}",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
             env_id="ML1",
             env_name=args.env_name,
+            reward_func_version="v1",
             meta_batch_size=meta_batch_size,
             total_goals_per_task_train=50,
             total_goals_per_task_test=50,

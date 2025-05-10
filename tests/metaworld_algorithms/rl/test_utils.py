@@ -30,8 +30,9 @@ def test_minibatch_iterator():
     previous_minibatch_rewards = None
 
     # Run the test
-    for epoch in range(num_epochs):
-        for minibatch in itertools.islice(iterator, num_minibatches):
+    for _ in range(num_epochs):
+        for _ in range(num_minibatches):
+            minibatch = next(iterator)
             # Check alignment
             for j in range(minibatch.observations.shape[0]):
                 assert np.all(minibatch.observations[j] == minibatch.observations[j][0])

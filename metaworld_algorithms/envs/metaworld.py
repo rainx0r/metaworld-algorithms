@@ -17,6 +17,7 @@ class MetaworldConfig(EnvConfig):
     reward_func_version: str = "v2"
     num_goals: int = 50
     reward_normalization_method: str | None = None
+    normalize_observations: bool = False
     env_name: str | None = None
 
     @cached_property
@@ -110,10 +111,12 @@ class MetaworldConfig(EnvConfig):
             seed=seed,
             use_one_hot=self.use_one_hot,
             terminate_on_success=self.terminate_on_success,
+            max_episode_steps=self.max_episode_steps,
             vector_strategy="async",
             reward_function_version=self.reward_func_version,
             num_goals=self.num_goals,
             reward_normalization_method=self.reward_normalization_method,
+            normalize_observations=self.normalize_observations,
         )
 
 
@@ -129,6 +132,25 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
     evaluation_adaptation_steps: int = 1
     evaluation_adaptation_episodes: int = 10
 
+    @cached_property
+    @override
+    def observation_space(self) -> gym.Space:
+        original_obs_space = super().observation_space
+        if not self.recurrent_info_in_obs:
+            return original_obs_space
+        else:
+            assert isinstance(self.action_space, gym.spaces.Box)
+            assert isinstance(original_obs_space, gym.spaces.Box)
+            return gym.spaces.Box(
+                np.concatenate(
+                    [original_obs_space.low, self.action_space.low, [-np.inf], [0.0]]
+                ),
+                np.concatenate(
+                    [original_obs_space.high, self.action_space.high, [np.inf], [1.0]]
+                ),
+                dtype=np.float64,
+            )
+
     @override
     def evaluate_metalearning(
         self, envs: GymVectorEnv, agent: MetaLearningAgent
@@ -138,8 +160,6 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         # We could just use Metaworld's types throughout the project, but
         # I kind of don't want to rely on `from metaworld` imports outside this file.
 
-        print(self.env_id)
-
         if self.env_id == "ML10" or self.env_id == "ML45":
             num_classes = 5
         elif self.env_id == "ML1":
@@ -147,13 +167,14 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         else:
             raise NotImplementedError(f"Unknown env_id: {self.env_id}")
 
-        num_evals = (num_classes * self.total_goals_per_task_test) // self.meta_batch_size
+        num_evals = (
+            num_classes * self.total_goals_per_task_test
+        ) // self.meta_batch_size
 
         return metalearning_evaluation(
             agent,  # pyright: ignore[reportArgumentType]
             envs,
             evaluation_episodes=self.evaluation_num_episodes,
-            max_episode_steps=self.max_episode_steps,
             adaptation_steps=self.evaluation_adaptation_steps,
             adaptation_episodes=self.evaluation_adaptation_episodes,
             num_evals=num_evals,
@@ -165,20 +186,21 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
     ) -> tuple[float, float, dict[str, float]]:
         if self.env_id == "ML10":
             num_classes = 10
-        elif  self.env_id == "ML45":
+        elif self.env_id == "ML45":
             num_classes = 45
         elif self.env_id == "ML1":
             num_classes = 1
         else:
             raise NotImplementedError(f"Unknown env_id: {self.env_id}")
 
-        num_evals = (num_classes * self.total_goals_per_task_train) // self.meta_batch_size
+        num_evals = (
+            num_classes * self.total_goals_per_task_train
+        ) // self.meta_batch_size
 
         return metalearning_evaluation(
             agent,  # pyright: ignore[reportArgumentType]
             envs,
             evaluation_episodes=self.evaluation_num_episodes,
-            max_episode_steps=self.max_episode_steps,
             adaptation_steps=self.evaluation_adaptation_steps,
             adaptation_episodes=self.evaluation_adaptation_episodes,
             num_evals=num_evals,
@@ -190,15 +212,19 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             seed=seed,
             terminate_on_success=self.terminate_on_success,
             vector_strategy="async",
+            max_episode_steps=self.max_episode_steps,
             meta_batch_size=self.meta_batch_size,
             total_tasks_per_cls=self.total_goals_per_task_train,
             reward_function_version=self.reward_func_version,
+            recurrent_info_in_obs=self.recurrent_info_in_obs,
+            reward_normalization_method=self.reward_normalization_method,
+            normalize_observations=self.normalize_observations,
         )
         if self.env_name:
             kwargs["env_name"] = self.env_name
         return gym.make_vec(  # pyright: ignore[reportReturnType]
             f"Meta-World/{self.env_id}-train",
-            **kwargs, # pyright: ignore[reportArgumentType]
+            **kwargs,  # pyright: ignore[reportArgumentType]
         )
 
     @override
@@ -207,13 +233,17 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
             seed=seed,
             terminate_on_success=True,
             vector_strategy="async",
+            max_episode_steps=self.max_episode_steps,
             meta_batch_size=self.meta_batch_size,
             total_tasks_per_cls=self.total_goals_per_task_test,
             reward_function_version=self.reward_func_version,
+            recurrent_info_in_obs=self.recurrent_info_in_obs,
+            reward_normalization_method=self.reward_normalization_method,
+            normalize_observations=self.normalize_observations,
         )
         if self.env_name:
             kwargs["env_name"] = self.env_name
         return gym.make_vec(  # pyright: ignore[reportReturnType]
             f"Meta-World/{self.env_id}-test",
-            **kwargs, # pyright: ignore[reportArgumentType]
+            **kwargs,  # pyright: ignore[reportArgumentType]
         )

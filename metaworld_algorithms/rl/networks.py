@@ -10,9 +10,10 @@ from jaxtyping import PRNGKeyArray
 from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
     QValueFunctionConfig,
+    RecurrentContinuousActionPolicyConfig,
     ValueFunctionConfig,
 )
-from metaworld_algorithms.config.utils import StdType
+from metaworld_algorithms.config.utils import CellType, StdType
 from metaworld_algorithms.nn import get_nn_arch_for_config
 from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.nn.initializers import uniform
@@ -79,6 +80,132 @@ class ContinuousActionPolicy(nn.Module):
         if self.config.squash_tanh:
             return TanhMultivariateNormalDiag(loc=mean, scale_diag=std)
         return distrax.MultivariateNormalDiag(loc=mean, scale_diag=std)
+
+
+class RecurrentContinuousActionPolicy(nn.Module):
+    """A Flax module representing the policy network for continous action spaces."""
+
+    action_dim: int
+    config: RecurrentContinuousActionPolicyConfig
+
+    def _get_cell(self, **kwargs) -> nn.RNNCellBase:
+        cell_args = dict(
+            features=self.config.network_config.width,
+            kernel_init=self.config.network_config.kernel_init(),
+            recurrent_kernel_init=self.config.network_config.recurrent_kernel_init(),
+            bias_init=self.config.network_config.bias_init(),
+        )
+        if self.config.network_config.cell_type == CellType.GRU:
+            cell_args["activation_fn"] = self.config.network_config.activation
+
+        return self.config.network_config.cell_type(
+            **cell_args,
+            **kwargs,
+        )
+
+    def setup(self) -> None:
+        # TODO: abstract this into a nn module?
+        # Might be useful so we can support transformers instead etc
+
+        self.encoder = None
+        if self.config.encoder_config is not None:
+            self.encoder = get_nn_arch_for_config(self.config.encoder_config)(
+                config=self.config.encoder_config,
+                head_dim=self.config.encoder_config.width,
+                head_kernel_init=self.config.encoder_config.kernel_init(),
+                head_bias_init=self.config.encoder_config.bias_init(),
+                activate_last=True,
+            )
+
+        self.cell: nn.RNNCellBase = self._get_cell()
+
+        def scan_fn(cell: nn.RNNCellBase, carry: jax.Array, x: jax.Array):
+            carry, y = cell(carry, x)
+            return carry, (carry, y)
+
+        self.rnn = nn.scan(
+            scan_fn,
+            in_axes=0,
+            out_axes=0,
+            unroll=1,
+            variable_broadcast="params",
+            split_rngs={"params": False},
+        )
+
+        head_kernel_init = uniform(1e-3)
+        if self.config.head_kernel_init is not None:
+            head_kernel_init = self.config.head_kernel_init()
+
+        head_bias_init = uniform(1e-3)
+        if self.config.head_bias_init is not None:
+            head_bias_init = self.config.head_bias_init()
+
+        _Dense = partial(
+            nn.Dense,
+            kernel_init=head_kernel_init,
+            bias_init=head_bias_init,
+            use_bias=self.config.network_config.use_bias,
+        )
+        if self.config.std_type == StdType.MLP_HEAD:
+            self.head = _Dense(self.action_dim * 2)
+        elif self.config.std_type == StdType.PARAM:
+            self.head = _Dense(self.action_dim)
+            self.log_std = self.param(  # init std to 1
+                "log_std", nn.initializers.zeros_init(), (self.action_dim,)
+            )
+        else:
+            raise ValueError("Invalid std_type: %s" % self.config.std_type)
+
+    def _process_head(self, x: jax.Array) -> distrax.Distribution:
+        if self.config.activate_head:
+            x = self.config.network_config.activation(x)
+
+        if self.config.std_type == StdType.MLP_HEAD:
+            mean, log_std = jnp.split(x, 2, axis=-1)
+        elif self.config.std_type == StdType.PARAM:
+            mean = x
+            log_std = jnp.broadcast_to(self.log_std, mean.shape)
+        else:
+            raise ValueError("Invalid std_type: %s" % self.config.std_type)
+
+        log_std = jnp.clip(
+            log_std, min=self.config.log_std_min, max=self.config.log_std_max
+        )
+        std = jnp.exp(log_std)
+
+        if self.config.squash_tanh:
+            return TanhMultivariateNormalDiag(loc=mean, scale_diag=std)
+        return distrax.MultivariateNormalDiag(loc=mean, scale_diag=std)
+
+    def initialize_carry(self, batch_size: int, key: PRNGKeyArray) -> jax.Array:
+        # NOTE: Second dim doesn't matter in initialize_carry
+        return self._get_cell(parent=None).initialize_carry(key, (batch_size, 1))
+
+    def __call__(
+        self, carry: jax.Array, x: jax.Array
+    ) -> tuple[jax.Array, distrax.Distribution]:
+        if self.encoder is not None:
+            x = self.encoder(x)
+            self.sow("intermediates", "encoder_out", x)
+        carry, x = self.cell(carry, x)
+        self.sow("intermediates", "rnn_cell", x)
+        out = self._process_head(self.head(x))
+        return carry, out
+
+    def rollout(
+        self,
+        x: jax.Array,
+        initial_carry: jax.Array,
+    ) -> tuple[jax.Array, distrax.Distribution]:
+        if self.encoder is not None:
+            x = self.encoder(x)
+            self.sow("intermediates", "encoder_out", x)
+
+        _, (carries, x) = self.rnn(self.cell, initial_carry, x)
+        self.sow("intermediates", "rnn_carries", carries)
+        self.sow("intermediates", "rnn", x)
+        out = self._process_head(self.head(x))
+        return carries, out
 
 
 class QValueFunction(nn.Module):

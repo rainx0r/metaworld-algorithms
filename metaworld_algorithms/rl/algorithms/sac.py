@@ -134,9 +134,6 @@ class SAC(OffPolicyAlgorithm[SACConfig]):
             tx=config.actor_config.network_config.optimizer.spawn(),
         )
 
-        print("Actor Arch:", jax.tree_util.tree_map(jnp.shape, actor.params))
-        print("Actor Params:", sum(x.size for x in jax.tree.leaves(actor.params)))
-
         critic_cls = partial(QValueFunction, config=config.critic_config)
         critic_net = Ensemble(critic_cls, num=config.num_critics)
         dummy_action = jnp.array(
@@ -149,9 +146,6 @@ class SAC(OffPolicyAlgorithm[SACConfig]):
             target_params=critic_init_params,
             tx=config.critic_config.network_config.optimizer.spawn(),
         )
-
-        print("Critic Arch:", jax.tree_util.tree_map(jnp.shape, critic.params))
-        print("Critic Params:", sum(x.size for x in jax.tree.leaves(critic.params)))
 
         alpha_net = Temperature(config.initial_temperature)
         alpha = TrainState.create(

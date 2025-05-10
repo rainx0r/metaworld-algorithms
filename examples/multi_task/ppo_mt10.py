@@ -5,7 +5,7 @@ import tyro
 
 from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
-    ValueFunctionConfig,
+    # ValueFunctionConfig,
 )
 from metaworld_algorithms.config.nn import VanillaNetworkConfig
 from metaworld_algorithms.config.optim import OptimizerConfig
@@ -29,7 +29,7 @@ def main() -> None:
     args = tyro.cli(Args)
 
     run = Run(
-        run_name="mt10_ppo",
+        run_name="mt10_ppo_lfb",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldConfig(
@@ -42,22 +42,22 @@ def main() -> None:
             policy_config=ContinuousActionPolicyConfig(
                 network_config=VanillaNetworkConfig(
                     optimizer=OptimizerConfig(max_grad_norm=1.0),
-                )
+                ),
+                squash_tanh=False,
             ),
-            vf_config=ValueFunctionConfig(
-                network_config=VanillaNetworkConfig(
-                    optimizer=OptimizerConfig(max_grad_norm=1.0),
-                )
-            ),
+            vf_config=None,
+            baseline_type="linear",
             num_epochs=16,
             num_gradient_steps=32,
             gae_lambda=0.97,
             target_kl=None,
             clip_vf_loss=False,
+            normalize_advantages=False,
         ),
         training_config=OnPolicyTrainingConfig(
             total_steps=int(2e7),
             rollout_steps=10_000,
+            evaluation_frequency=1_000_000 // 500,
         ),
         checkpoint=True,
         resume=args.resume,

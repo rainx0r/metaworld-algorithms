@@ -1,9 +1,9 @@
 from typing import Any, Generator, Never
 
-import scipy
 import numpy as np
 import numpy.typing as npt
 import optax
+import scipy
 from flax import struct
 from flax.linen.fp8_ops import OVERWRITE_WITH_GRADIENT
 from flax.training.train_state import TrainState as FlaxTrainState
@@ -51,21 +51,27 @@ class TrainState(FlaxTrainState):
         )
 
 
+class RNNTrainState(TrainState):
+    seq_apply_fn: Callable = struct.field(pytree_node=False)
+    init_carry_fn: Callable = struct.field(pytree_node=False)
+
+
 class MetaTrainState(TrainState):
     inner_train_state: TrainState
     expand_params: Callable = struct.field(pytree_node=False)
 
-
 def to_minibatch_iterator(
-    data: Rollout, num: int, seed: int
+    data: Rollout, num: int, seed: int, flatten_batch_dims: bool = True
 ) -> Generator[Rollout, None, Never]:
     # Flatten batch dims
-    rollouts = Rollout(
-        *map(
-            lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
-            data,
-        )  # pyright: ignore[reportArgumentType]
-    )
+    rollouts = data
+    if flatten_batch_dims:
+        rollouts = Rollout(
+            *map(
+                lambda x: x.reshape(-1, x.shape[-1]) if x is not None else None,
+                data,
+            )  # pyright: ignore[reportArgumentType]
+        )
 
     rollout_size = rollouts.observations.shape[0]
     minibatch_size = rollout_size // num
@@ -77,7 +83,7 @@ def to_minibatch_iterator(
         for field in rollouts:
             rng.bit_generator.state = rng_state
             if field is not None:
-                rng.shuffle(field)
+                rng.shuffle(field, axis=0)
         rng_state = rng.bit_generator.state
         for start in range(0, rollout_size, minibatch_size):
             end = start + minibatch_size
@@ -88,6 +94,19 @@ def to_minibatch_iterator(
                 )
             )
 
+
+def to_deterministic_minibatch_iterator(data: Rollout) -> Generator[Rollout, None, Never]:
+    # Flatten batch dims
+    rollouts = data
+
+    while True:
+        for step in range(len(rollouts.rewards)):
+            yield Rollout(
+                *map(
+                    lambda x: x[step] if x is not None else None,  # pyright: ignore[reportArgumentType]
+                    rollouts,
+                )
+            )
 
 def compute_gae(
     rollouts: Rollout,
@@ -278,8 +297,107 @@ def swap_rollout_axes(rollout: Rollout, axis1: int, axis2: int) -> Rollout:
     )
 
 
+def to_padded_episode_batch(rollout: Rollout) -> Rollout:
+    N = rollout.observations.shape[1]  # (:, task, ...)
+    rollout = swap_rollout_axes(rollout, 0, 1)  # (task, timestep, ...)
+    sequences = {
+        field: [] for field in rollout._fields if getattr(rollout, field) is not None
+    }
+    episode_starts = rollout.dones.squeeze()
+    episode_lengths = []
+
+    for task in range(N):
+        boundaries = np.argwhere(episode_starts[task]).squeeze()
+        if boundaries.ndim == 0:
+            # Single episode
+            episode_lengths.append(len(episode_starts[task]))
+            for field in rollout._fields:
+                if (field_data := getattr(rollout, field)) is not None:
+                    sequences[field].append(field_data[task])
+        else:
+            boundaries = boundaries[1:]
+            episode_lengths.append(boundaries[0])
+            episode_lengths += list(np.diff(boundaries))
+            for field in rollout._fields:
+                if (field_data := getattr(rollout, field)) is not None:
+                    sequences[field] += np.array_split(field_data[task], boundaries)
+
+    max_episode_length = max(episode_lengths)
+    valids = np.ones((len(episode_lengths), max_episode_length), dtype=np.bool_)
+    for field in sequences:
+        for i, sequence in enumerate(sequences[field]):
+            seq_len = len(sequence)
+            sequences[field][i] = np.pad(
+                sequence,
+                ((0, max_episode_length - seq_len), (0, 0)),
+                mode="constant",
+                constant_values=0,
+            )
+            valids[i, seq_len:] = False
+
+    sequences = {field: np.stack(sequences[field]) for field in sequences}
+    rollout = Rollout(**sequences)
+    rollout = rollout._replace(valids=valids.reshape(rollout.rewards.shape))
+    return rollout
+
+
+def to_overlapping_chunks(rollout: Rollout, chunk_len: int, overlap: int) -> Rollout:
+    # Recommended by https://danijar.com/tips-for-training-recurrent-neural-networks/
+    # HACK: Currently assumes there's only a single episode cause it's used for RL2
+    assert overlap < chunk_len
+    step = chunk_len - overlap
+
+    T = rollout.observations.shape[0]  # (time, ...)
+    starts = np.arange(0, T - overlap, step)
+
+    sequences = {
+        field: [] for field in rollout._fields if getattr(rollout, field) is not None
+    }
+
+    for s in starts:
+        end = s + chunk_len
+        if end > T:
+            break
+        for field in sequences:
+            field_data = getattr(rollout, field)
+            sequences[field].append(field_data[s:end])
+
+    data = {field: np.stack(sequences[field]) for field in sequences}
+    rollout = Rollout(**data)
+    rollout = rollout._replace(valids=np.ones_like(rollout.rewards))
+    return rollout
+
+
+def to_episode_batch(rollout: Rollout, episode_length: int) -> Rollout:
+    def _reshape(x: npt.NDArray) -> npt.NDArray:
+        # Starting shape: (timestep, task, ...)
+        x = x.swapaxes(0, 1)  # (task, timestep, ...)
+        x = x.reshape(
+            x.shape[0], -1, episode_length, x.shape[-1]
+        )  # (task, episode, timestep, ...)
+        x = x.reshape(-1, episode_length, x.shape[-1])  # (episode, timestep, ...)
+        return x
+
+    return Rollout(
+        *map(
+            lambda x: _reshape(x) if x is not None else None,
+            rollout,
+        )  # pyright: ignore[reportArgumentType]
+    )
+
+
 def dones_to_episode_starts(rollout: Rollout) -> Rollout:
     episode_starts = np.concatenate(
         (np.ones((1, *rollout.dones.shape[1:])), rollout.dones), axis=0
     )[:-1]
     return rollout._replace(dones=episode_starts)
+
+
+def explained_variance(
+    y_pred: Float[npt.NDArray, " total_num_steps"],
+    y_true: Float[npt.NDArray, " total_num_steps"],
+) -> float:
+    # From SB3 https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/common/utils.py#L50
+    assert y_true.ndim == 1 and y_pred.ndim == 1
+    var_y = np.var(y_true)
+    return np.nan if var_y == 0 else float(1 - np.var(y_true - y_pred) / var_y)
