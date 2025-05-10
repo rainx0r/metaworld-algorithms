@@ -1,19 +1,17 @@
-
 from dataclasses import dataclass
 from pathlib import Path
+
 import numpy as np
 import tyro
-
-from metaworld_algorithms.config.rl import (
-    GradientBasedMetaLearningTrainingConfig,
-)
 
 from metaworld_algorithms.config.networks import (
     ContinuousActionPolicyConfig,
 )
 from metaworld_algorithms.config.nn import VanillaNetworkConfig
+from metaworld_algorithms.config.rl import (
+    GradientBasedMetaLearningTrainingConfig,
+)
 from metaworld_algorithms.config.utils import Activation, Initializer, StdType
-
 from metaworld_algorithms.envs import MetaworldMetaLearningConfig
 from metaworld_algorithms.rl.algorithms import MAMLTRPOConfig
 from metaworld_algorithms.run import Run
@@ -28,7 +26,8 @@ class Args:
     data_dir: Path = Path("./run_results")
     resume: bool = False
     evaluation_frequency: int = 100_000
-    env_name: str| None = None
+    env_name: str | None = None
+
 
 def main() -> None:
     args = tyro.cli(Args)
@@ -36,13 +35,12 @@ def main() -> None:
     meta_batch_size = 10
 
     run = Run(
-        run_name=f"ml1_mamltrpo_v1_{args.env_name}",
+        run_name=f"ml1_mamltrpo_{args.env_name}",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
             env_id="ML1",
             env_name=args.env_name,
-            reward_func_version='v1',
             meta_batch_size=meta_batch_size,
             total_goals_per_task_train=50,
             total_goals_per_task_test=50,

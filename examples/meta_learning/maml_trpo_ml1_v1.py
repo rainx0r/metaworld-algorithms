@@ -5,18 +5,15 @@ import numpy as np
 import tyro
 
 from metaworld_algorithms.config.networks import (
-    RecurrentContinuousActionPolicyConfig,
+    ContinuousActionPolicyConfig,
 )
-from metaworld_algorithms.config.nn import (
-    RecurrentNeuralNetworkConfig,
-)
-from metaworld_algorithms.config.optim import OptimizerConfig
+from metaworld_algorithms.config.nn import VanillaNetworkConfig
 from metaworld_algorithms.config.rl import (
-    RNNBasedMetaLearningTrainingConfig,
+    GradientBasedMetaLearningTrainingConfig,
 )
-from metaworld_algorithms.config.utils import Activation, CellType, Initializer, StdType
+from metaworld_algorithms.config.utils import Activation, Initializer, StdType
 from metaworld_algorithms.envs import MetaworldMetaLearningConfig
-from metaworld_algorithms.rl.algorithms import RL2Config
+from metaworld_algorithms.rl.algorithms import MAMLTRPOConfig
 from metaworld_algorithms.run import Run
 
 
@@ -28,57 +25,51 @@ class Args:
     wandb_entity: str | None = None
     data_dir: Path = Path("./run_results")
     resume: bool = False
-    evaluation_frequency: int = 1_000_000
+    evaluation_frequency: int = 100_000
+    env_name: str | None = None
 
 
 def main() -> None:
     args = tyro.cli(Args)
 
-    meta_batch_size = 20
-    num_tasks = 10
+    meta_batch_size = 10
 
     run = Run(
-        run_name="ml10_rl2_full_new",
+        run_name=f"ml1_mamltrpo_v1_{args.env_name}",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
-            env_id="ML10",
+            env_id="ML1",
+            env_name=args.env_name,
+            reward_func_version="v1",
             meta_batch_size=meta_batch_size,
-            recurrent_info_in_obs=True,
+            total_goals_per_task_train=50,
+            total_goals_per_task_test=50,
         ),
-        algorithm=RL2Config(
+        algorithm=MAMLTRPOConfig(
             num_tasks=meta_batch_size,
-            meta_batch_size=meta_batch_size,
             gamma=0.99,
-            gae_lambda=0.95,
-            clip_eps=0.2,
-            policy_config=RecurrentContinuousActionPolicyConfig(
-                encoder_config=None,
-                network_config=RecurrentNeuralNetworkConfig(
-                    width=256,
-                    cell_type=CellType.GRU,
+            gae_lambda=1.0,
+            policy_config=ContinuousActionPolicyConfig(
+                network_config=VanillaNetworkConfig(
+                    depth=2,
+                    width=512,
                     activation=Activation.Tanh,
-                    recurrent_kernel_init=Initializer.ORTHOGONAL,
                     kernel_init=Initializer.XAVIER_UNIFORM,
                     bias_init=Initializer.ZEROS,
-                    optimizer=OptimizerConfig(lr=5e-4, max_grad_norm=1.0),
                 ),
                 log_std_min=np.log(1e-6),
                 log_std_max=None,
-                std_type=StdType.MLP_HEAD,
+                std_type=StdType.PARAM,
                 squash_tanh=False,
                 head_kernel_init=Initializer.XAVIER_UNIFORM,
                 head_bias_init=Initializer.ZEROS,
-                activate_head=True,
             ),
-            num_epochs=10,
-            chunk_len=5000,  # No TBPTT
-            normalize_advantages=False,
         ),
-        training_config=RNNBasedMetaLearningTrainingConfig(
+        training_config=GradientBasedMetaLearningTrainingConfig(
             meta_batch_size=meta_batch_size,
             evaluate_on_train=False,
-            total_steps=int(2_000_000 * num_tasks),
+            total_steps=2_000_000,
             evaluation_frequency=args.evaluation_frequency,
         ),
         checkpoint=True,

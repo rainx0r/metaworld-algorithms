@@ -44,6 +44,7 @@ def main() -> None:
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
             env_id="ML10",
+            reward_func_version="v1",
             meta_batch_size=meta_batch_size,
             recurrent_info_in_obs=True,
         ),

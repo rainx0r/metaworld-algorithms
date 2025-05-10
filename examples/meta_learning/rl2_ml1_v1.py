@@ -29,23 +29,27 @@ class Args:
     wandb_entity: str | None = None
     data_dir: Path = Path("./run_results")
     resume: bool = False
-    evaluation_frequency: int = 1_000_000
+    evaluation_frequency: int = 100_000
+    env_name: str | None = None
 
 
 def main() -> None:
     args = tyro.cli(Args)
 
-    meta_batch_size = 20
-    num_tasks = 10
+    meta_batch_size = 10
 
     run = Run(
-        run_name="ml10_rl2",
+        run_name=f"ml1_rl2_v1_{args.env_name}",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
-            env_id="ML10",
+            env_id="ML1",
+            env_name=args.env_name,
+            reward_func_version="v1",
             meta_batch_size=meta_batch_size,
             recurrent_info_in_obs=True,
+            total_goals_per_task_train=50,
+            total_goals_per_task_test=50,
         ),
         algorithm=RL2Config(
             num_tasks=meta_batch_size,
@@ -85,7 +89,7 @@ def main() -> None:
         training_config=RNNBasedMetaLearningTrainingConfig(
             meta_batch_size=meta_batch_size,
             evaluate_on_train=False,
-            total_steps=int(2_000_000 * num_tasks),
+            total_steps=2_000_000,
             evaluation_frequency=args.evaluation_frequency,
         ),
         checkpoint=True,
