@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-import tyro
 import numpy as np
+import tyro
 
 from metaworld_algorithms.config.networks import (
     RecurrentContinuousActionPolicyConfig,
@@ -34,11 +34,11 @@ class Args:
 def main() -> None:
     args = tyro.cli(Args)
 
-    meta_batch_size = 10
+    meta_batch_size = 20
     num_tasks = 10
 
     run = Run(
-        run_name="ml10_rl2_full",
+        run_name="ml10_rl2_full_new",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
@@ -50,7 +50,8 @@ def main() -> None:
             num_tasks=meta_batch_size,
             meta_batch_size=meta_batch_size,
             gamma=0.99,
-            gae_lambda=0.97,
+            gae_lambda=0.95,
+            clip_eps=0.2,
             policy_config=RecurrentContinuousActionPolicyConfig(
                 encoder_config=None,
                 network_config=RecurrentNeuralNetworkConfig(
@@ -62,15 +63,16 @@ def main() -> None:
                     bias_init=Initializer.ZEROS,
                     optimizer=OptimizerConfig(lr=5e-4, max_grad_norm=1.0),
                 ),
-                log_std_min=np.log(0.5),
-                log_std_max=np.log(1.5),
+                log_std_min=np.log(1e-6),
+                log_std_max=None,
                 std_type=StdType.MLP_HEAD,
                 squash_tanh=False,
                 head_kernel_init=Initializer.XAVIER_UNIFORM,
                 head_bias_init=Initializer.ZEROS,
+                activate_head=True,
             ),
             num_epochs=10,
-            chunk_len=5000,
+            chunk_len=5000,  # No TBPTT
             normalize_advantages=False,
         ),
         training_config=RNNBasedMetaLearningTrainingConfig(

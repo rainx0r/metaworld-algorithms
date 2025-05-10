@@ -1,6 +1,8 @@
-from metaworld_algorithms.config.utils import Initializer, StdType
-from .nn import NeuralNetworkConfig, RecurrentNeuralNetworkConfig, VanillaNetworkConfig
 from dataclasses import dataclass
+
+from metaworld_algorithms.config.utils import Initializer, StdType
+
+from .nn import NeuralNetworkConfig, RecurrentNeuralNetworkConfig, VanillaNetworkConfig
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,9 @@ class RecurrentContinuousActionPolicyConfig:
     network_config: RecurrentNeuralNetworkConfig = RecurrentNeuralNetworkConfig()
     """The config for the neural network to use for function approximation."""
 
-    encoder_config: NeuralNetworkConfig | None = VanillaNetworkConfig(width=400, depth=2)
+    encoder_config: NeuralNetworkConfig | None = VanillaNetworkConfig(
+        width=400, depth=2
+    )
     """The config for the neural network to use for encoding the observations. The optimizer config for this network is ignored."""
 
     squash_tanh: bool = True
@@ -56,6 +60,9 @@ class RecurrentContinuousActionPolicyConfig:
 
     head_bias_init: Initializer | None = None
     """Override the initializer to use for the MLP head biases."""
+
+    activate_head: bool = False
+    """Whether or not to activate the MLP head after the RNN layer."""
 
 
 @dataclass(frozen=True)

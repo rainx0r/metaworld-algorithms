@@ -9,6 +9,7 @@ from metaworld_algorithms.config.networks import (
 )
 from metaworld_algorithms.config.nn import (
     RecurrentNeuralNetworkConfig,
+    VanillaNetworkConfig,
 )
 from metaworld_algorithms.config.optim import OptimizerConfig
 from metaworld_algorithms.config.rl import (
@@ -38,7 +39,7 @@ def main() -> None:
     num_tasks = 10
 
     run = Run(
-        run_name="ml10_rl2_tbptt",
+        run_name="ml10_rl2_full_encoder",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
@@ -53,7 +54,13 @@ def main() -> None:
             gae_lambda=0.95,
             clip_eps=0.2,
             policy_config=RecurrentContinuousActionPolicyConfig(
-                encoder_config=None,
+                encoder_config=VanillaNetworkConfig(
+                    width=256,
+                    depth=2,
+                    kernel_init=Initializer.XAVIER_UNIFORM,
+                    bias_init=Initializer.ZEROS,
+                    activation=Activation.Tanh,
+                ),
                 network_config=RecurrentNeuralNetworkConfig(
                     width=256,
                     cell_type=CellType.GRU,
@@ -72,7 +79,7 @@ def main() -> None:
                 activate_head=True,
             ),
             num_epochs=10,
-            chunk_len=250,
+            chunk_len=5000,  # No TBPTT
             normalize_advantages=False,
         ),
         training_config=RNNBasedMetaLearningTrainingConfig(

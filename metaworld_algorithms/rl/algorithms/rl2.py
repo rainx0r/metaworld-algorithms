@@ -1,5 +1,5 @@
-from collections import defaultdict
 import dataclasses
+from collections import defaultdict
 from functools import partial
 from typing import Self, override
 
@@ -82,6 +82,9 @@ def _sample_action_dist(
     Action,
     PRNGKeyArray,
 ]:
+    next_state: jax.Array
+    dist: distrax.Distribution
+
     key, action_key = jax.random.split(key)
     next_state, dist = policy.apply_fn(policy.params, state, observation)
     action, action_log_prob = dist.sample_and_log_prob(seed=action_key)
@@ -306,8 +309,12 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
         return rollouts
 
     @jax.jit
-    def _update_inner(self, data: Rollout, initial_carry: jax.Array) -> tuple[Self, jax.Array, LogDict]:
-        def policy_loss(params: FrozenDict) -> tuple[Float[Array, ""], tuple[jax.Array, LogDict]]:
+    def _update_inner(
+        self, data: Rollout, initial_carry: jax.Array
+    ) -> tuple[Self, jax.Array, LogDict]:
+        def policy_loss(
+            params: FrozenDict,
+        ) -> tuple[Float[Array, ""], tuple[jax.Array, LogDict]]:
             action_dist: distrax.Distribution
             new_log_probs: Float[Array, " *batch"]
             assert data.log_probs is not None
@@ -343,16 +350,19 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             entropy_loss = jnp.expand_dims(entropy_loss, -1)
             entropy_loss = jnp.where(data.valids, entropy_loss, zero_loss).mean()
 
-            return pg_loss - self.entropy_coefficient * entropy_loss, (carries, {
-                "losses/entropy_loss": entropy_loss,
-                "losses/policy_loss": pg_loss,
-                "losses/approx_kl": approx_kl,
-                "losses/clip_fracs": clip_fracs,
-            })
+            return pg_loss - self.entropy_coefficient * entropy_loss, (
+                carries,
+                {
+                    "losses/entropy_loss": entropy_loss,
+                    "losses/policy_loss": pg_loss,
+                    "losses/approx_kl": approx_kl,
+                    "losses/clip_fracs": clip_fracs,
+                },
+            )
 
-        (_, (carries, logs)), policy_grads = jax.value_and_grad(policy_loss, has_aux=True)(
-            self.policy.params
-        )
+        (_, (carries, logs)), policy_grads = jax.value_and_grad(
+            policy_loss, has_aux=True
+        )(self.policy.params)
         policy_grads_flat, _ = jax.flatten_util.ravel_pytree(policy_grads)
         grads_hist_dict = prefix_dict(
             "nn/policy_grads", pytree_histogram(policy_grads["params"])
@@ -364,12 +374,17 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             "nn/policy_params", pytree_histogram(policy.params["params"])
         )
 
-        return self.replace(policy=policy), carries, logs | {
-            "nn/policy_grad_norm": jnp.linalg.norm(policy_grads_flat),
-            "nn/policy_param_norm": jnp.linalg.norm(policy_params_flat),
-            **grads_hist_dict,
-            **param_hist_dict,
-        }
+        return (
+            self.replace(policy=policy),
+            carries,
+            logs
+            | {
+                "nn/policy_grad_norm": jnp.linalg.norm(policy_grads_flat),
+                "nn/policy_param_norm": jnp.linalg.norm(policy_params_flat),
+                **grads_hist_dict,
+                **param_hist_dict,
+            },
+        )
 
     @jax.jit
     def _get_activations(
@@ -416,7 +431,9 @@ class RL2(RNNBasedMetaLearningAlgorithm[RL2Config]):
             self, initial_carry = self.init_recurrent_state(data.rewards.shape[2])
             for step in range(len(data.rewards)):
                 minibatch_rollout = next(minibatch_iterator)
-                self, carries, logs = self._update_inner(minibatch_rollout, initial_carry)
+                self, carries, logs = self._update_inner(
+                    minibatch_rollout, initial_carry
+                )
                 initial_carry = carries[(self.chunk_len - self.overlap - 1)]
                 for k, v in logs.items():
                     update_logs[k].append(v)

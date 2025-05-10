@@ -13,7 +13,7 @@ from metaworld_algorithms.config.networks import (
     RecurrentContinuousActionPolicyConfig,
     ValueFunctionConfig,
 )
-from metaworld_algorithms.config.utils import StdType
+from metaworld_algorithms.config.utils import CellType, StdType
 from metaworld_algorithms.nn import get_nn_arch_for_config
 from metaworld_algorithms.nn.distributions import TanhMultivariateNormalDiag
 from metaworld_algorithms.nn.initializers import uniform
@@ -89,11 +89,17 @@ class RecurrentContinuousActionPolicy(nn.Module):
     config: RecurrentContinuousActionPolicyConfig
 
     def _get_cell(self, **kwargs) -> nn.RNNCellBase:
-        return self.config.network_config.cell_type(
+        cell_args = dict(
             features=self.config.network_config.width,
             kernel_init=self.config.network_config.kernel_init(),
             recurrent_kernel_init=self.config.network_config.recurrent_kernel_init(),
             bias_init=self.config.network_config.bias_init(),
+        )
+        if self.config.network_config.cell_type == CellType.GRU:
+            cell_args["activation_fn"] = self.config.network_config.activation
+
+        return self.config.network_config.cell_type(
+            **cell_args,
             **kwargs,
         )
 
@@ -151,6 +157,9 @@ class RecurrentContinuousActionPolicy(nn.Module):
             raise ValueError("Invalid std_type: %s" % self.config.std_type)
 
     def _process_head(self, x: jax.Array) -> distrax.Distribution:
+        if self.config.activate_head:
+            x = self.config.network_config.activation(x)
+
         if self.config.std_type == StdType.MLP_HEAD:
             mean, log_std = jnp.split(x, 2, axis=-1)
         elif self.config.std_type == StdType.PARAM:

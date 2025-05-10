@@ -59,6 +59,7 @@ class RecurrentNeuralNetworkConfig:
     optimizer: OptimizerConfig = OptimizerConfig()
     """The optimizer to use for the whole network."""
 
+
 @dataclass(frozen=True, kw_only=True)
 class VanillaNetworkConfig(NeuralNetworkConfig):
     use_skip_connections: bool = False
