@@ -2,8 +2,8 @@
 
 import pathlib
 import random
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
 import jax
 import numpy as np
@@ -17,12 +17,12 @@ from metaworld_algorithms.checkpoint import (
     get_metadata_only_restore_args,
     load_env_checkpoints,
 )
+from metaworld_algorithms.config.envs import EnvConfig, MetaLearningEnvConfig
 from metaworld_algorithms.config.rl import (
     AlgorithmConfig,
     OffPolicyTrainingConfig,
     TrainingConfig,
 )
-from metaworld_algorithms.config.envs import EnvConfig, MetaLearningEnvConfig
 from metaworld_algorithms.rl.algorithms import (
     Algorithm,
     OffPolicyAlgorithm,
@@ -202,6 +202,8 @@ class Run:
                 mean_success_rate, mean_returns, mean_success_per_task = (
                     self.env.evaluate_metalearning(eval_envs, agent.wrap())
                 )
+                eval_envs.close()
+                del eval_envs
             else:
                 raise ValueError("Invalid agent / env combination.")
             final_metrics = {
@@ -251,6 +253,9 @@ class Run:
                 wandb.log_artifact(best_ckpt_artifact)
 
             checkpoint_manager.close()
+
+        envs.close()
+        del envs
 
         if self._wandb_enabled:
             wandb.finish()

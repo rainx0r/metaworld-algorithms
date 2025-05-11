@@ -3,11 +3,11 @@ import time
 from collections import deque
 from typing import Deque, Generic, Self, TypeVar, override
 
-from jaxtyping import Float
 import numpy as np
 import numpy.typing as npt
 import orbax.checkpoint as ocp
 from flax import struct
+from jaxtyping import Float
 
 from metaworld_algorithms.checkpoint import get_checkpoint_save_args
 from metaworld_algorithms.config.envs import EnvConfig, MetaLearningEnvConfig
@@ -33,9 +33,9 @@ from metaworld_algorithms.types import (
     LogDict,
     MetaLearningAgent,
     Observation,
-    RNNState,
     ReplayBufferCheckpoint,
     ReplayBufferSamples,
+    RNNState,
     Rollout,
 )
 
@@ -318,6 +318,9 @@ class GradientBasedMetaLearningAlgorithm(
             if track:
                 log({"charts/SPS": sps} | logs, step=global_step)
 
+        eval_envs.close()
+        del eval_envs
+
         return self
 
 
@@ -521,6 +524,9 @@ class RNNBasedMetaLearningAlgorithm(
             print("- SPS: ", sps)
             if track:
                 log({"charts/SPS": sps} | logs, step=global_step)
+
+        eval_envs.close()
+        del eval_envs
 
         return self
 
