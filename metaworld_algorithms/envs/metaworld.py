@@ -160,7 +160,7 @@ class MetaworldMetaLearningConfig(MetaworldConfig, MetaLearningEnvConfig):
         # We could just use Metaworld's types throughout the project, but
         # I kind of don't want to rely on `from metaworld` imports outside this file.
 
-        if self.env_id == "ML10" or self.env_id == "ML45":
+        if self.env_id == "ML10" or self.env_id == "ML45" or self.env_id == "ML25":
             num_classes = 5
         elif self.env_id == "ML1":
             num_classes = 1
