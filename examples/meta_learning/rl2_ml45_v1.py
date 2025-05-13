@@ -39,7 +39,7 @@ def main() -> None:
     num_tasks = 45
 
     run = Run(
-        run_name="ml10_rl2",
+        run_name="ml45_rl2_v1",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldMetaLearningConfig(
