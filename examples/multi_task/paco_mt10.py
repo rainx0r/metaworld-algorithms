@@ -26,37 +26,36 @@ def main() -> None:
     args = tyro.cli(Args)
 
     run = Run(
-        run_name="mt50_paco",
+        run_name="mt10_paco",
         seed=args.seed,
         data_dir=args.data_dir,
         env=MetaworldConfig(
-            env_id="MT50",
+            env_id="MT10",
             terminate_on_success=False,
         ),
         algorithm=MTSACConfig(
-            num_tasks=50,
+            num_tasks=10,
             gamma=0.99,
             actor_config=ContinuousActionPolicyConfig(
                 network_config=PaCoConfig(
-                    num_tasks=50,
-                    num_parameter_sets=20,
+                    num_tasks=10,
+                    num_parameter_sets=5,
                     optimizer=OptimizerConfig(max_grad_norm=1.0)
                 )
             ),
             critic_config=QValueFunctionConfig(
                 network_config=PaCoConfig(
-                    num_tasks=50,
-                    num_parameter_sets=20,
+                    num_tasks=10,
+                    num_parameter_sets=5,
                     optimizer=OptimizerConfig(max_grad_norm=1.0), 
                 )
             ),
             num_critics=2,
         ),
         training_config=OffPolicyTrainingConfig(
-            total_steps=int(1e8),
-            buffer_size=int(100_000 * 50),
-            batch_size=6400,
-            evaluation_frequency=int(1_000_000 // 500),
+            total_steps=int(2e7),
+            buffer_size=int(1e6),
+            batch_size=1280
         ),
         checkpoint=True,
         resume=args.resume,
